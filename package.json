@@ -1,0 +1,36 @@
+{
+  "name": "sahaara-backend",
+  "version": "1.0.0",
+  "description": "The is the backend for Sahaara, a smart, real-time, hyperlocal community support platform.",
+  "homepage": "https://github.com/Sahaara-FYP/sahaara-backend#readme",
+  "bugs": {
+    "url": "https://github.com/Sahaara-FYP/sahaara-backend/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Sahaara-FYP/sahaara-backend.git"
+  },
+  "license": "ISC",
+  "author": "",
+  "type": "module",
+  "main": "index.ts",
+  "scripts": {
+    "dev": "nodemon --watch src --ext ts --exec ts-node src/index.ts",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.16.2",
+    "@supabase/supabase-js": "^2.58.0",
+    "express": "^5.1.0",
+    "morgan": "^1.10.1",
+    "nodemon": "^3.1.10"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.3",
+    "@types/morgan": "^1.9.10",
+    "@types/node": "^24.5.2",
+    "prisma": "^6.16.2",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.2"
+  }
+}
