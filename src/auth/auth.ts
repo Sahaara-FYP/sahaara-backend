@@ -1,7 +1,103 @@
-import { Router } from "express";
+import { Router, type Request, type Response } from "express";
+import prisma from "./../utils/prisma.ts";
+import bcrypt from "bcryptjs";
+import { generateAccessToken, generateRefreshToken } from "./auth.service.ts";
 
 export const authRouter = Router();
 
-authRouter.get("/", async (req, res) => {
-  res.json({ message: "Testing Auth Route" });
+// POST APIs
+authRouter.post("/register", async (req: Request, res: Response) => {
+  try {
+    const { email, password, full_name } = req.body || {};
+
+    if (!email || !password || !full_name) {
+      return res
+        .status(400)
+        .json({ error: "Email and password and full name are required" });
+    }
+
+    const existingUser = await prisma.user.findUnique({
+      where: { email },
+    });
+
+    if (existingUser) {
+      return res.status(400).json({ error: "Email already registered" });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    const newUser = await prisma.user.create({
+      data: {
+        email,
+        passwordHash: hashedPassword,
+        fullName: full_name,
+      },
+      select: {
+        id: true,
+        email: true,
+        role: true,
+        isActive: true,
+        createdAt: true,
+        completedOnboarding: true,
+      },
+    });
+
+    return res.status(201).json({ user: newUser });
+  } catch (error) {
+    console.error("Register error:", error);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+authRouter.post("/login", async (req: Request, res: Response) => {
+  try {
+    const { identifier, password } = req.body || {};
+
+    if (!identifier || !password) {
+      return res
+        .status(400)
+        .json({ error: "Identifier and password are required" });
+    }
+
+    const user = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { email: identifier },
+          { username: identifier },
+          { phoneNumber: identifier },
+        ],
+      },
+    });
+
+    if (!user) {
+      return res.status(401).json({ error: "Invalid credentials" });
+    }
+
+    const isMatch = await bcrypt.compare(password, user.passwordHash);
+    if (!isMatch) {
+      return res.status(401).json({ error: "Invalid credentials" });
+    }
+
+    const accessToken = generateAccessToken({
+      userId: user.id,
+      role: user.role,
+    });
+    const refreshToken = generateRefreshToken({
+      userId: user.id,
+      role: user.role,
+    });
+
+    const { passwordHash, ...safeUser } = user;
+
+    res.json({
+      success: true,
+      message: "Login successful",
+      accessToken,
+      refreshToken,
+      user: safeUser,
+    });
+  } catch (error) {
+    console.error("Login error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
 });
