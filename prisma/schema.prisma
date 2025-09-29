@@ -1,8 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
 
 generator client {
   provider = "prisma-client-js"
@@ -37,7 +32,8 @@ model User {
   completedOnboarding Boolean @default(false) @map("completed_onboarding")
 
   // Relations (arrays for convenience)
-  // requests             Request[]
+  requests             Request[]
+  participations     RequestParticipator[]
   // offers               Offer[]
   // alerts               Alert[]
 }
@@ -58,5 +54,80 @@ enum UserRole {
   user
   admin
   moderator
+}
+
+model Request {
+  id                    String          @id @default(uuid())
+  userId                String          @map("user_id")
+  user                  User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title                 String
+  description           String?
+  category              String
+  urgencyLevel          UrgencyLevel    @default(normal) @map("urgency_level")
+  status                RequestStatus   @default(pending)
+  locationLat           Float           @map("location_lat")
+  locationLng           Float           @map("location_lng")
+  postAnonymously       Boolean         @default(false) @map("post_anonymously")
+  visibilityVerifiedOnly Boolean        @default(false) @map("visibility_verified_only")
+  priorityScore         Float?          @default(0) @map("priority_score")
+  visibilityWomenOnly   Boolean         @default(false) @map("visibility_women_only")
+  reportedCount         Int             @default(0) @map("reported_count")
+  moderationStatus      ModerationStatus @default(clean) @map("moderation_status")
+  responsesCount        Int             @default(0) @map("responses_count")
+  allowMultipleHelpers  Boolean         @default(false) @map("allow_multiple_helpers")
+  maxHelpers            Int?            @map("max_helpers")
+  completedAt           DateTime?       @map("completed_at")
+  expiresAt             DateTime?       @map("expires_at")
+  attachments           Json?     
+  createdAt             DateTime        @default(now()) @map("created_at")
+  updatedAt             DateTime        @updatedAt @map("updated_at")
+
+  // Relations
+  participators              RequestParticipator[]
+  // ratings              Rating[]
+}
+
+enum UrgencyLevel {
+  normal
+  high
+  low
+}
+
+enum RequestStatus {
+  pending
+  partially_accepted
+  accepted
+  completed
+  cancelled
+  expired
+}
+
+enum ModerationStatus {
+  clean
+  flagged
+  reviewed
+  blocked
+}
+
+model RequestParticipator {
+  id        String   @id @default(uuid())
+  requestId String   @map("request_id")
+  userId    String   @map("user_id")
+
+  status    ParticipationStatus @default(pending)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  request   Request  @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([requestId, userId], name: "unique_request_user")
+}
+
+enum ParticipationStatus {
+  pending
+  accepted
+  rejected
 }
 
