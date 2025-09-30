@@ -71,7 +71,6 @@ requestsRouter.post(
       post_anonymously,
       visibility_verified_only,
       visibility_women_only,
-      allow_multiple_helpers,
       max_helpers,
     } = req.body || {};
 
@@ -98,8 +97,7 @@ requestsRouter.post(
             postAnonymously: post_anonymously || false,
             visibilityVerifiedOnly: visibility_verified_only || false,
             visibilityWomenOnly: visibility_women_only || false,
-            allowMultipleHelpers: allow_multiple_helpers || false,
-            maxHelpers: max_helpers ? parseInt(max_helpers) : null,
+            maxHelpers: max_helpers ? parseInt(max_helpers) : 1,
           },
         });
 
@@ -318,6 +316,122 @@ requestsRouter.post(
 
       console.error("Error offering help:", error);
       return res.status(500).json({ error: "Internal server error" });
+    }
+  }
+);
+
+requestsRouter.patch(
+  "/accept",
+  verifyAccessToken,
+  async (req: Request, res: Response) => {
+    try {
+      const { participator_id } = req.body;
+      const userId = req.userId!;
+
+      if (!participator_id) {
+        return res.status(400).json({ error: "participatorId is required" });
+      }
+
+      const participator = await prisma.requestParticipator.findUnique({
+        where: { id: participator_id },
+        include: { request: true },
+      });
+
+      if (!participator) {
+        return res.status(404).json({ error: "Participator not found" });
+      }
+
+      if (participator.request.userId !== userId) {
+        return res
+          .status(403)
+          .json({ error: "Not authorized to accept participator" });
+      }
+
+      const result = await prisma.$transaction(async (tx) => {
+        const updatedParticipator = await tx.requestParticipator.update({
+          where: { id: participator_id },
+          data: { status: "accepted" },
+        });
+
+        const acceptedCount = await tx.requestParticipator.count({
+          where: {
+            requestId: participator.requestId,
+            status: "accepted",
+          },
+        });
+
+        let updatedRequest = null;
+        if (acceptedCount === participator.request.maxHelpers) {
+          updatedRequest = await tx.request.update({
+            where: { id: participator.requestId },
+            data: { status: "accepted" },
+          });
+        } else if (acceptedCount > 0) {
+          updatedRequest = await tx.request.update({
+            where: { id: participator.requestId },
+            data: { status: "partially_accepted" },
+          });
+        }
+
+        return { updatedParticipator, updatedRequest };
+      });
+
+      return res.status(200).json({
+        message: "Participator accepted successfully",
+        participator: result.updatedParticipator,
+        request: result.updatedRequest,
+      });
+    } catch (error) {
+      console.error("Error accepting participator:", error);
+      return res.status(500).json({ error: "Internal server error" });
+    }
+  }
+);
+
+requestsRouter.patch(
+  "/cancel",
+  verifyAccessToken,
+  async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId!;
+      const { request_id } = req.body;
+
+      if (!request_id) {
+        return res.status(400).json({ message: "requestId is required" });
+      }
+
+      const request = await prisma.request.findUnique({
+        where: { id: request_id },
+      });
+
+      if (!request) {
+        return res.status(404).json({ message: "Request not found" });
+      }
+
+      if (request.userId !== userId) {
+        return res
+          .status(403)
+          .json({ message: "Not authorized to cancel this request" });
+      }
+
+      if (request.status === "completed" || request.status === "cancelled") {
+        return res
+          .status(400)
+          .json({ message: `Cannot cancel a ${request.status} request` });
+      }
+
+      const updatedRequest = await prisma.request.update({
+        where: { id: request_id },
+        data: { status: "cancelled" },
+      });
+
+      return res.status(200).json({
+        message: "Request cancelled successfully",
+        request: updatedRequest,
+      });
+    } catch (error) {
+      console.error("Cancel request error:", error);
+      return res.status(500).json({ message: "Internal server error" });
     }
   }
 );

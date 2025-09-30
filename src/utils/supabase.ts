@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import "dotenv/config";
 
 declare global {
   var supabase: SupabaseClient | undefined;

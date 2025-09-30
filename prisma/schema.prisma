@@ -33,9 +33,10 @@ model User {
 
   // Relations (arrays for convenience)
   requests             Request[]
-  participations     RequestParticipator[]
+  requestParticipations     RequestParticipator[]
   // offers               Offer[]
-  // alerts               Alert[]
+  alerts               Alert[]
+  alertAcknowledgements AlertAcknowledgement[]
 }
 
 enum Gender {
@@ -74,7 +75,6 @@ model Request {
   reportedCount         Int             @default(0) @map("reported_count")
   moderationStatus      ModerationStatus @default(clean) @map("moderation_status")
   responsesCount        Int             @default(0) @map("responses_count")
-  allowMultipleHelpers  Boolean         @default(false) @map("allow_multiple_helpers")
   maxHelpers            Int?            @map("max_helpers")
   completedAt           DateTime?       @map("completed_at")
   expiresAt             DateTime?       @map("expires_at")
@@ -130,4 +130,47 @@ enum ParticipationStatus {
   accepted
   rejected
 }
+
+model Alert {
+  id              String   @id @default(uuid())
+  userId          String  @map("user_id")
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  title           String   @db.VarChar(255)
+  description     String?   @db.Text
+  category        String @default("general")
+  urgencyLevel    UrgencyLevel @map("urgency_level") @default(normal)
+  locationLat     Decimal  @db.Decimal(10, 7) @map("location_lat")
+  locationLng     Decimal  @db.Decimal(10, 7) @map("location_lng")
+  attachments     Json?
+  status          AlertStatus @default(active)
+  moderationStatus ModerationStatus @default(clean) @map("moderation_status")
+  expiryTime      DateTime? @map("expiry_time")
+
+  acknowledgements AlertAcknowledgement[]
+
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+}
+
+model AlertAcknowledgement {
+  id        String @id @default(uuid())
+  alertId   String @map("alert_id")
+  userId    String @map("user_id")
+
+  alert     Alert  @relation(fields: [alertId], references: [id], onDelete: Cascade)
+  user      User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([alertId, userId])
+}
+
+enum AlertStatus {
+  active
+  resolved
+  expired
+  cancelled
+}
+
 
