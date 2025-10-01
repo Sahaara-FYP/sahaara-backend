@@ -1,8 +1,7 @@
 import { Router, type Request, type Response } from "express";
-import prisma from "../../utils/prisma.ts";
+import prisma from "../../utils/prisma.js";
 import bcrypt from "bcryptjs";
-import { generateAccessToken, generateRefreshToken } from "./auth.service.ts";
-import { verifyAccessToken } from "../../middleware/verifyAccessToken.ts";
+import { generateAccessToken, generateRefreshToken } from "./auth.service.js";
 
 export const authRouter = Router();
 

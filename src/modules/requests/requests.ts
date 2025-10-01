@@ -1,11 +1,11 @@
 import { type Request, type Response, Router } from "express";
-import { verifyAccessToken } from "../../middleware/verifyAccessToken.ts";
-import supabase from "../../utils/supabase.ts";
-import prisma from "../../utils/prisma.ts";
+import { verifyAccessToken } from "../../middleware/verifyAccessToken.js";
+import supabase from "../../utils/supabase.js";
+import prisma from "../../utils/prisma.js";
 import { Prisma } from "../../../generated/prisma/index.js";
-import upload from "../../middleware/multer.ts";
-import { createSignedUrls } from "../../utils/createSignedURL.ts";
-import { verifyRole } from "../../middleware/verifyRole.ts";
+import upload from "../../middleware/multer.js";
+import { createSignedUrls } from "../../utils/createSignedURL.js";
+import { verifyRole } from "../../middleware/verifyRole.js";
 
 export const requestsRouter = Router();
 

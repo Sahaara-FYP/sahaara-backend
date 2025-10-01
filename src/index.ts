@@ -4,11 +4,11 @@ import express, {
   type Response,
 } from "express";
 import morgan from "morgan";
-import { authRouter } from "./modules/auth/auth.ts";
+import { authRouter } from "./modules/auth/auth.js";
 import { fileURLToPath } from "url";
 import path from "path";
-import { requestsRouter } from "./modules/requests/requests.ts";
-import { alertsRouter } from "./modules/alerts/alerts.ts";
+import { requestsRouter } from "./modules/requests/requests.js";
+import { alertsRouter } from "./modules/alerts/alerts.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
