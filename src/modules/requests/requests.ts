@@ -4,6 +4,8 @@ import supabase from "../../utils/supabase.ts";
 import prisma from "../../utils/prisma.ts";
 import { Prisma } from "../../../generated/prisma/index.js";
 import upload from "../../middleware/multer.ts";
+import { createSignedUrls } from "../../utils/createSignedURL.ts";
+import { verifyRole } from "../../middleware/verifyRole.ts";
 
 export const requestsRouter = Router();
 
@@ -98,6 +100,7 @@ requestsRouter.post(
             visibilityVerifiedOnly: visibility_verified_only || false,
             visibilityWomenOnly: visibility_women_only || false,
             maxHelpers: max_helpers ? parseInt(max_helpers) : 1,
+            attachments: [],
           },
         });
 
@@ -175,7 +178,6 @@ requestsRouter.get(
       const lng = parseFloat(location_lng as string);
       const radiusFilter = radius ? parseFloat(radius as string) : null;
 
-      // Helper function to parse boolean query params
       const parseBool = (val: any) =>
         val === "true" ? true : val === "false" ? false : undefined;
 
@@ -214,6 +216,10 @@ requestsRouter.get(
         filters.push(`"allow_multiple_helpers" = $${params.length + 1}`);
         params.push(parseBool(allow_multiple_helpers));
       }
+      if (req.role === "user") {
+        filters.push(`r.user_id != $${params.length + 1}`);
+        params.push(req.userId);
+      }
       if (search) {
         filters.push(
           `("title" ILIKE $${params.length + 1} OR "description" ILIKE $${
@@ -245,7 +251,7 @@ requestsRouter.get(
               SELECT 1 
               FROM "RequestParticipator" rp 
               WHERE rp.request_id = sub.id 
-                AND rp.user_id = '${req.userId}'
+                AND rp.user_id = '${req.userId!}'
             ) THEN true 
             ELSE false 
           END AS "alreadyOffered"`;
@@ -273,7 +279,16 @@ requestsRouter.get(
         LIMIT ${parseInt(limit as string)};
       `;
 
-      const requests = await prisma.$queryRawUnsafe(query, ...params);
+      const requests: any[] = await prisma.$queryRawUnsafe(query, ...params);
+
+      for (const request of requests) {
+        if (
+          Array.isArray(request.attachments) &&
+          request.attachments.length > 0
+        ) {
+          request.attachments = await createSignedUrls(request.attachments);
+        }
+      }
 
       return res.status(200).json({ success: true, requests });
     } catch (error) {
@@ -321,7 +336,7 @@ requestsRouter.post(
 );
 
 requestsRouter.patch(
-  "/accept",
+  "/accept-participator",
   verifyAccessToken,
   async (req: Request, res: Response) => {
     try {
@@ -347,11 +362,31 @@ requestsRouter.patch(
           .json({ error: "Not authorized to accept participator" });
       }
 
+      if (participator.status === "accepted") {
+        return res.status(400).json({
+          error: "Cannot accept a participator that has already been accepted",
+        });
+      }
+
+      if (participator.status === "withdrawn") {
+        return res.status(400).json({
+          error: "Cannot accept a participator that has already withdrawn",
+        });
+      }
+
+      if (participator.status === "rejected") {
+        return res.status(400).json({
+          error: "Cannot accept a participator that has already been rejected",
+        });
+      }
+
       const result = await prisma.$transaction(async (tx) => {
         const updatedParticipator = await tx.requestParticipator.update({
           where: { id: participator_id },
           data: { status: "accepted" },
         });
+
+        let updatedRequest = null;
 
         const acceptedCount = await tx.requestParticipator.count({
           where: {
@@ -360,7 +395,6 @@ requestsRouter.patch(
           },
         });
 
-        let updatedRequest = null;
         if (acceptedCount === participator.request.maxHelpers) {
           updatedRequest = await tx.request.update({
             where: { id: participator.requestId },
@@ -377,12 +411,73 @@ requestsRouter.patch(
       });
 
       return res.status(200).json({
-        message: "Participator accepted successfully",
+        message: `Participator accepted successfully`,
         participator: result.updatedParticipator,
         request: result.updatedRequest,
       });
     } catch (error) {
-      console.error("Error accepting participator:", error);
+      console.error(`Error accepting participator:`, error);
+      return res.status(500).json({ error: "Internal server error" });
+    }
+  }
+);
+
+requestsRouter.patch(
+  "/reject-participator",
+  verifyAccessToken,
+  async (req: Request, res: Response) => {
+    try {
+      const { participator_id } = req.body;
+      const userId = req.userId!;
+
+      if (!participator_id) {
+        return res.status(400).json({ error: "participatorId is required" });
+      }
+
+      const participator = await prisma.requestParticipator.findUnique({
+        where: { id: participator_id },
+        include: { request: true },
+      });
+
+      if (!participator) {
+        return res.status(404).json({ error: "Participator not found" });
+      }
+
+      if (participator.request.userId !== userId) {
+        return res
+          .status(403)
+          .json({ error: "Not authorized to reject this participator" });
+      }
+
+      if (participator.status === "accepted") {
+        return res.status(400).json({
+          error: "Cannot reject a participator that has already been accepted",
+        });
+      }
+
+      if (participator.status === "withdrawn") {
+        return res.status(400).json({
+          error: "Cannot reject a participator that has already withdrawn",
+        });
+      }
+
+      if (participator.status === "rejected") {
+        return res.status(400).json({
+          error: "Cannot reject a participator that has already been rejected",
+        });
+      }
+
+      const updatedParticipator = await prisma.requestParticipator.update({
+        where: { id: participator_id },
+        data: { status: "rejected" },
+      });
+
+      return res.status(200).json({
+        message: "Participator rejected successfully",
+        participator: updatedParticipator,
+      });
+    } catch (error) {
+      console.error("Error rejecting participator:", error);
       return res.status(500).json({ error: "Internal server error" });
     }
   }
@@ -432,6 +527,91 @@ requestsRouter.patch(
     } catch (error) {
       console.error("Cancel request error:", error);
       return res.status(500).json({ message: "Internal server error" });
+    }
+  }
+);
+
+requestsRouter.patch(
+  "/moderation",
+  verifyAccessToken,
+  verifyRole(["admin"]),
+  async (req: Request, res: Response) => {
+    try {
+      const { request_id, moderation_status } = req.body;
+
+      if (!request_id || !moderation_status) {
+        return res
+          .status(400)
+          .json({ error: "request_id and moderation_status are required" });
+      }
+
+      const updatedRequest = await prisma.request.update({
+        where: { id: request_id },
+        data: { moderationStatus: moderation_status },
+      });
+
+      return res.status(200).json({
+        message: "Moderation status updated successfully",
+        request: updatedRequest,
+      });
+    } catch (error: any) {
+      console.error("Error updating moderation status:", error);
+      return res.status(500).json({ error: "Internal Server Error" });
+    }
+  }
+);
+
+requestsRouter.patch(
+  "/withdraw-offer",
+  verifyAccessToken,
+  async (req: Request, res: Response) => {
+    try {
+      const { participator_id } = req.body || {};
+      const userId = req.userId!;
+
+      if (!participator_id) {
+        return res.status(400).json({ error: "participatorId is required" });
+      }
+
+      const result = await prisma.$transaction(async (tx) => {
+        const participator = await tx.requestParticipator.findUnique({
+          where: { id: participator_id },
+          include: { request: true },
+        });
+
+        if (!participator) {
+          throw new Error("Request participation not found");
+        }
+
+        if (participator.userId !== userId) {
+          throw new Error("You are not allowed to withdraw this offer");
+        }
+
+        if (
+          participator.status === "accepted" ||
+          participator.status == "rejected"
+        ) {
+          throw new Error(
+            "Cannot withdraw an offer that has already been accepted/rejected"
+          );
+        }
+
+        const updatedParticipator = await tx.requestParticipator.update({
+          where: { id: participator_id },
+          data: { status: "withdrawn" },
+        });
+
+        return updatedParticipator;
+      });
+
+      return res
+        .status(200)
+        .json({ success: true, message: "Offer withdrawn", result });
+    } catch (error: any) {
+      console.error("Withdraw offer error:", error);
+      return res
+        .status(400)
+        .json({ error: error.message || "Internal server error" });
     }
   }
 );

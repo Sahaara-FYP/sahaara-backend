@@ -129,6 +129,7 @@ enum ParticipationStatus {
   pending
   accepted
   rejected
+  withdrawn
 }
 
 model Alert {

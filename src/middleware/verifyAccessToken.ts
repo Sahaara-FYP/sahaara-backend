@@ -38,8 +38,8 @@ export const verifyAccessToken = (
     req.role = decoded.role;
 
     next();
-  } catch (err) {
-    console.error("JWT verification error:", err);
+  } catch (err: any) {
+    console.error("JWT verification error:", err.message);
     return res.status(401).json({ error: "Invalid or expired token" });
   }
 };
