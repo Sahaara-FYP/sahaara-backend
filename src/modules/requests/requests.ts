@@ -164,7 +164,6 @@ requestsRouter.get(
         visibility_verified_only,
         visibility_women_only,
         moderation_status,
-        allow_multiple_helpers,
         location_lat,
         location_lng,
         radius,
@@ -211,10 +210,6 @@ requestsRouter.get(
       if (moderation_status) {
         filters.push(`"moderation_status" = $${params.length + 1}`);
         params.push(moderation_status);
-      }
-      if (allow_multiple_helpers) {
-        filters.push(`"allow_multiple_helpers" = $${params.length + 1}`);
-        params.push(parseBool(allow_multiple_helpers));
       }
       if (req.role === "user") {
         filters.push(`r.user_id != $${params.length + 1}`);
