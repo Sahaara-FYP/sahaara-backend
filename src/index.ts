@@ -9,12 +9,22 @@ import { fileURLToPath } from "url";
 import path from "path";
 import { requestsRouter } from "./modules/requests/requests.js";
 import { alertsRouter } from "./modules/alerts/alerts.js";
+import cors from "cors";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app: Application = express();
 const PORT = process.env.PORT || 5000;
+
+app.use(
+  cors({
+    origin: ["http://localhost:5173"],
+    methods: ["GET", "POST", "PATCH", "DELETE", "PUT"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    credentials: true,
+  })
+);
 
 app.use(express.json());
 app.use(morgan("dev"));
