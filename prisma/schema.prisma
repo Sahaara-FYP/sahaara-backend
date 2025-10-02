@@ -75,7 +75,7 @@ model Request {
   reportedCount         Int             @default(0) @map("reported_count")
   moderationStatus      ModerationStatus @default(clean) @map("moderation_status")
   responsesCount        Int             @default(0) @map("responses_count")
-  maxHelpers            Int?            @map("max_helpers")
+  maxHelpers            Int?            @map("max_helpers") @default(1)
   completedAt           DateTime?       @map("completed_at")
   expiresAt             DateTime?       @map("expires_at")
   attachments           Json?     
