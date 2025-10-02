@@ -3,5 +3,5 @@
   "version": "0.1.0",
   "description": "Sahaara - A Smart, Real-time, Hyperlocal Community Support Application",
   "title": "Sahaara API Documentation",
-  "url": "http://localhost:5000/api"
+  "url": "{BASEURL}/api"
 }

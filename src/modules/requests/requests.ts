@@ -29,32 +29,8 @@ export const requestsRouter = Router();
  * @apiBody {Number} [max_helpers] Maximum number of helpers.
  * @apiBody {File[]} [attachments] Array of files to attach (multipart/form-data, optional).
  *
- * @apiSuccess {Boolean} success Indicates request creation success.
  * @apiSuccess {String} message Response message.
- * @apiSuccess {Object} request Created request object.
- * @apiSuccess {String} request.id Unique ID of the request.
- * @apiSuccess {String} request.userId ID of the user who created the request.
- * @apiSuccess {String} request.title Request title.
- * @apiSuccess {String} [request.description] Request description.
- * @apiSuccess {String} request.category Category of the request.
- * @apiSuccess {String="normal","high","low"} request.urgencyLevel Urgency level.
- * @apiSuccess {String="pending","partially_accepted","accepted","completed","cancelled","expired"} request.status Current status of the request.
- * @apiSuccess {Number} request.locationLat Latitude of request location.
- * @apiSuccess {Number} request.locationLng Longitude of request location.
- * @apiSuccess {Boolean} request.postAnonymously Whether posted anonymously.
- * @apiSuccess {Boolean} request.visibilityVerifiedOnly Visibility restricted to verified users.
- * @apiSuccess {Boolean} request.visibilityWomenOnly Visibility restricted to women.
- * @apiSuccess {Number} request.priorityScore Priority score (calculated internally, default 0).
- * @apiSuccess {Number} request.reportedCount Number of reports on this request.
- * @apiSuccess {String="clean","flagged","reviewed","blocked"} request.moderationStatus Moderation status.
- * @apiSuccess {Number} request.responsesCount Number of responses to the request.
- * @apiSuccess {Boolean} request.allowMultipleHelpers Whether multiple helpers are allowed.
- * @apiSuccess {Number} [request.maxHelpers] Maximum number of helpers allowed.
- * @apiSuccess {Date} [request.completedAt] Timestamp when request was completed.
- * @apiSuccess {Date} [request.expiresAt] Expiration timestamp of request.
- * @apiSuccess {String[]} [request.attachments] Array of uploaded file paths.
- * @apiSuccess {Date} request.createdAt Request creation timestamp.
- * @apiSuccess {Date} request.updatedAt Request last update timestamp.
+ * @apiUse RequestModel
  *
  * @apiError {String} error Error message describing what went wrong.
  */
@@ -137,7 +113,6 @@ requestsRouter.post(
       });
 
       return res.status(201).json({
-        success: true,
         message: "Request created successfully",
         request: newRequest,
       });
@@ -293,6 +268,22 @@ requestsRouter.get(
   }
 );
 
+/**
+ * @api {patch} /requests/offer Offer Help To Request
+ * @apiName OfferHelp
+ * @apiGroup Requests
+ * @apiPermission authenticated
+ *
+ * @apiHeader {String} Authorization Bearer token (JWT Access Token).
+ *
+ * @apiBody {String} request_id ID of the request to offer help to (required).
+ *
+ * @apiSuccess {String} message Success message.
+ * @apiUse RequestParticipatorModel
+ *
+ * @apiError (400 Bad Request) {String} error Already offered help to this request.
+ * @apiError (500 Internal Server Error) {String} error Unexpected server error.
+ */
 requestsRouter.post(
   "/offer",
   verifyAccessToken,
@@ -320,7 +311,7 @@ requestsRouter.post(
     } catch (error: any) {
       if (error.code === "P2002") {
         return res
-          .status(409)
+          .status(400)
           .json({ error: "You already offered help for this request" });
       }
 
@@ -330,6 +321,25 @@ requestsRouter.post(
   }
 );
 
+/**
+ * @api {patch} /requests/accept-participator Accept a Participator
+ * @apiName AcceptParticipator
+ * @apiGroup Requests
+ * @apiPermission authenticated
+ *
+ * @apiHeader {String} Authorization Bearer token (JWT Access Token).
+ *
+ * @apiBody {String} participator_id ID of the participator to accept (required).
+ *
+ * @apiSuccess {String} message Success message.
+ * @apiUse RequestModel
+ * @apiUse RequestParticipatorModel
+ *
+ * @apiError (400 Bad Request) {String} error Cannot accept participator (already accepted/withdrawn/rejected).
+ * @apiError (403 Forbidden) {String} error Not authorized to accept participator of this request.
+ * @apiError (404 Not Found) {String} error Participator not found.
+ * @apiError (500 Internal Server Error) {String} error Unexpected server error.
+ */
 requestsRouter.patch(
   "/accept-participator",
   verifyAccessToken,
@@ -376,26 +386,28 @@ requestsRouter.patch(
       }
 
       const result = await prisma.$transaction(async (tx) => {
+        const acceptedCount = await tx.requestParticipator.count({
+          where: { requestId: participator.requestId, status: "accepted" },
+        });
+
+        if (acceptedCount >= participator.request.maxHelpers!) {
+          throw new Error("Max helpers already accepted");
+        }
+
         const updatedParticipator = await tx.requestParticipator.update({
           where: { id: participator_id },
           data: { status: "accepted" },
         });
 
+        const newAcceptedCount = acceptedCount + 1;
         let updatedRequest = null;
 
-        const acceptedCount = await tx.requestParticipator.count({
-          where: {
-            requestId: participator.requestId,
-            status: "accepted",
-          },
-        });
-
-        if (acceptedCount === participator.request.maxHelpers) {
+        if (newAcceptedCount === participator.request.maxHelpers) {
           updatedRequest = await tx.request.update({
             where: { id: participator.requestId },
             data: { status: "accepted" },
           });
-        } else if (acceptedCount > 0) {
+        } else if (newAcceptedCount > 0) {
           updatedRequest = await tx.request.update({
             where: { id: participator.requestId },
             data: { status: "partially_accepted" },
@@ -417,6 +429,24 @@ requestsRouter.patch(
   }
 );
 
+/**
+ * @api {patch} /requests/reject-participator Reject a Participator
+ * @apiName RejectParticipator
+ * @apiGroup Requests
+ * @apiPermission authenticated
+ *
+ * @apiHeader {String} Authorization Bearer token (JWT Access Token).
+ *
+ * @apiBody {String} participator_id ID of the participator to reject (required).
+ *
+ * @apiSuccess {String} message Success message.
+ * @apiUse RequestParticipatorModel
+ *
+ * @apiError (400 Bad Request) {String} error Cannot reject participator (already accepted/withdrawn/rejected).
+ * @apiError (403 Forbidden) {String} error Not authorized to reject participator of this request.
+ * @apiError (404 Not Found) {String} error Participator not found.
+ * @apiError (500 Internal Server Error) {String} error Unexpected server error.
+ */
 requestsRouter.patch(
   "/reject-participator",
   verifyAccessToken,
@@ -478,6 +508,24 @@ requestsRouter.patch(
   }
 );
 
+/**
+ * @api {patch} /requests/cancel Cancel a Request
+ * @apiName CancelRequest
+ * @apiGroup Requests
+ * @apiPermission authenticated
+ *
+ * @apiHeader {String} Authorization Bearer token (JWT Access Token).
+ *
+ * @apiBody {String} request_id ID of the request to cancel (required).
+ *
+ * @apiSuccess {String} message Response message.
+ * @apiUse RequestModel
+ *
+ * @apiError (400 Bad Request) {String} message Request cannot be cancelled (already completed/cancelled).
+ * @apiError (403 Forbidden) {String} message Not authorized to cancel this request.
+ * @apiError (404 Not Found) {String} message Request not found.
+ * @apiError (500 Internal Server Error) {String} message Unexpected error.
+ */
 requestsRouter.patch(
   "/cancel",
   verifyAccessToken,
@@ -526,6 +574,22 @@ requestsRouter.patch(
   }
 );
 
+/**
+ * @api {patch} /requests/moderation Update Moderation Status
+ * @apiName UpdateModerationStatus
+ * @apiGroup Requests
+ * @apiPermission admin
+ *
+ * @apiHeader {String} Authorization Bearer token (JWT Access Token).
+ *
+ * @apiBody {String} request_id ID of the request to update (required).
+ * @apiBody {String="clean","flagged","reviewed","blocked"} moderation_status New moderation status (required).
+ *
+ * @apiSuccess {String} message Response message.
+ * @apiUse RequestModel
+ *
+ * @apiError {String} error Error message if update fails.
+ */
 requestsRouter.patch(
   "/moderation",
   verifyAccessToken,
@@ -556,6 +620,20 @@ requestsRouter.patch(
   }
 );
 
+/**
+ * @api {patch} /requests/withdraw-offer Withdraw Offer
+ * @apiName WithdrawOffer
+ * @apiGroup Requests
+ *
+ * @apiHeader {String} Authorization Bearer token (JWT Access Token).
+ *
+ * @apiBody {String} participator_id ID of the participator record to withdraw (required).
+ *
+ * @apiSuccess {String} message Response message.
+ * @apiUse RequestParticipatorModel
+ *
+ * @apiError {String} error Error message describing why withdrawal failed.
+ */
 requestsRouter.patch(
   "/withdraw-offer",
   verifyAccessToken,
@@ -599,9 +677,10 @@ requestsRouter.patch(
         return updatedParticipator;
       });
 
-      return res
-        .status(200)
-        .json({ success: true, message: "Offer withdrawn", result });
+      return res.status(200).json({
+        message: "Offer withdrawn",
+        participator: result,
+      });
     } catch (error: any) {
       console.error("Withdraw offer error:", error);
       return res
