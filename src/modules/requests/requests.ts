@@ -211,7 +211,6 @@ requestsRouter.get(
         params.push(moderation_status);
       }
 
-      // user-specific filter (don’t show own requests)
       if (req.role === "user") {
         filters.push(`r.user_id != $${params.length + 1}`);
         params.push(req.userId);
@@ -230,10 +229,7 @@ requestsRouter.get(
         ? `WHERE ${filters.join(" AND ")}`
         : "";
 
-      // -------------------------------------
-      // LOCATION / DISTANCE only for users
-      // -------------------------------------
-      let distanceExpr = "0"; // fallback for admin
+      let distanceExpr = "0";
       let radiusFilter: number | null = null;
 
       if (req.role === "user") {
@@ -269,7 +265,6 @@ requestsRouter.get(
           END AS "alreadyOffered"`;
       }
 
-      // ---------- COUNT QUERY ----------
       const countQuery = `
         SELECT COUNT(*)::int AS total
         FROM (
@@ -289,7 +284,6 @@ requestsRouter.get(
       );
       const total = countResult[0]?.total || 0;
 
-      // ---------- DATA QUERY ----------
       const query = `
         SELECT sub.*, 
                json_build_object(
