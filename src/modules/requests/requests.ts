@@ -185,11 +185,11 @@ requestsRouter.get(
         params.push(category);
       }
       if (urgency_level) {
-        filters.push(`"urgency_level" = $${params.length + 1}`);
+        filters.push(`"urgency_level" = $${params.length + 1}::"UrgencyLevel"`);
         params.push(urgency_level);
       }
       if (status) {
-        filters.push(`"status" = $${params.length + 1}`);
+        filters.push(`"status" = $${params.length + 1}::"RequestStatus"`);
         params.push(status);
       }
       if (post_anonymously) {
@@ -205,7 +205,9 @@ requestsRouter.get(
         params.push(parseBool(visibility_women_only));
       }
       if (moderation_status) {
-        filters.push(`"moderation_status" = $${params.length + 1}`);
+        filters.push(
+          `"moderation_status" = $${params.length + 1}::"ModerationStatus"`
+        );
         params.push(moderation_status);
       }
 
