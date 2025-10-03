@@ -123,6 +123,37 @@ requestsRouter.post(
   }
 );
 
+/**
+ * @api {get} /requests Get Nearby Requests
+ * @apiName GetRequests
+ * @apiGroup Requests
+ * @apiPermission authenticated
+ *
+ * @apiHeader {String} Authorization Bearer token (JWT Access Token).
+ *
+ * @apiQuery {String} location_lat Latitude of current location (required).
+ * @apiQuery {String} location_lng Longitude of current location (required).
+ * @apiQuery {Number} [radius] Search radius in meters (optional).
+ * @apiQuery {String} [category] Filter by request category.
+ * @apiQuery {String=normal,high,low} [urgency_level] Filter by urgency level.
+ * @apiQuery {String=pending,partially_accepted,accepted,completed,cancelled,expired} [status] Filter by request status.
+ * @apiQuery {Boolean} [post_anonymously] Filter by anonymity.
+ * @apiQuery {Boolean} [visibility_verified_only] Filter by verified-only visibility.
+ * @apiQuery {Boolean} [visibility_women_only] Filter by women-only visibility.
+ * @apiQuery {String=clean,flagged,reviewed,blocked} [moderation_status] Filter by moderation status.
+ * @apiQuery {String} [search] Search in title and description.
+ * @apiQuery {Number} [limit=20] Limit number of results.
+ * @apiQuery {Number} [offset=0] Offset for pagination.
+ *
+ * @apiSuccess {String} message Success Message
+ * @apiSuccess {Object[]} requests List of requests.
+ * @apiSuccess {Object} requester Person who made the request
+ * @apiSuccess {Object[]} participants People who are accepted to offering help
+ * @apiUse RequestModel
+ *
+ * @apiError (400 Bad Request) {String} error Location is required.
+ * @apiError (500 Internal Server Error) {String} error Unexpected server error.
+ */
 requestsRouter.get(
   "/",
   verifyAccessToken,
@@ -235,7 +266,30 @@ requestsRouter.get(
                  'username', u.username,
                  'email', u.email,
                  'profile_picture_url', u.profile_picture_url
-               ) AS requester
+               ) AS requester,
+                 (
+         SELECT COALESCE(
+           json_agg(
+             json_build_object(
+               'id', rp.id,
+               'status', rp.status,
+               'created_at', rp.created_at,
+               'updated_at', rp.updated_at,
+               'user', json_build_object(
+                 'id', pu.id,
+                 'full_name', pu.full_name,
+                 'username', pu.username,
+                 'email', pu.email,
+                 'profile_picture_url', pu.profile_picture_url
+               )
+             )
+           ), '[]'
+         )
+         FROM "RequestParticipator" rp
+         JOIN "User" pu ON pu.id = rp.user_id
+         WHERE rp.request_id = sub.id
+           AND rp.status = 'accepted'
+       ) AS participants
                ${selectExtra}
         FROM (
           SELECT r.*, ${distanceExpr} AS distance
@@ -260,7 +314,9 @@ requestsRouter.get(
         }
       }
 
-      return res.status(200).json({ success: true, requests });
+      return res
+        .status(200)
+        .json({ message: "Requests fetched successfully!", requests });
     } catch (error) {
       console.error("Get requests error:", error);
       return res.status(500).json({ error: "Internal server error" });
