@@ -8,6 +8,41 @@ import { createSignedUrls } from "../../utils/createSignedURL.js";
 
 export const alertsRouter = Router();
 
+/**
+ * @api {post} /alerts Create a new Alert
+ * @apiName CreateAlert
+ * @apiGroup Alerts
+ *
+ * @apiHeader {String} Authorization Bearer access token.
+ *
+ * @apiBody {String} title                 Title of the alert (required).
+ * @apiBody {String} [description]         Detailed description of the alert.
+ * @apiBody {String} [category="general"]  Category of the alert.
+ * @apiBody {String="normal","high","low"} [urgency_level="normal"] Urgency level.
+ * @apiBody {Number} location_lat          Latitude of the alert location (required).
+ * @apiBody {Number} location_lng          Longitude of the alert location (required).
+ * @apiBody {File[]} [attachments]         Optional file attachments (images, PDFs, etc.).
+ *
+ * @apiSuccess {Boolean} success           Indicates if request was successful.
+ * @apiSuccess {String} message            Success message.
+ * @apiSuccess {Object} alert              The created Alert object.
+ * @apiSuccess {String} alert.id           Unique identifier of the alert.
+ * @apiSuccess {String} alert.userId       ID of the user who created the alert.
+ * @apiSuccess {String} alert.title        Title of the alert.
+ * @apiSuccess {String} [alert.description] Description of the alert.
+ * @apiSuccess {String} alert.category     Category of the alert.
+ * @apiSuccess {String} alert.urgencyLevel Urgency level.
+ * @apiSuccess {Number} alert.locationLat  Latitude of the alert.
+ * @apiSuccess {Number} alert.locationLng  Longitude of the alert.
+ * @apiSuccess {Json[]} [alert.attachments] List of uploaded attachment paths.
+ * @apiSuccess {String="active","resolved","expired","cancelled"} alert.status Current status of the alert.
+ * @apiSuccess {String="clean","flagged","reviewed","blocked"} alert.moderationStatus Moderation status.
+ * @apiSuccess {String} alert.createdAt    Timestamp of creation.
+ * @apiSuccess {String} alert.updatedAt    Timestamp of last update.
+ *
+ * @apiError (400 Bad Request) {String} error Title or Location is missing.
+ * @apiError (500 Internal Server Error) {String} error Unexpected server error.
+ */
 alertsRouter.post(
   "/",
   verifyAccessToken,
