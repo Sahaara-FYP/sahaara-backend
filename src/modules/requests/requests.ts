@@ -146,9 +146,8 @@ requestsRouter.post(
  * @apiQuery {Number} [offset=0] Offset for pagination.
  *
  * @apiSuccess {String} message Success Message
- * @apiSuccess {Object[]} requests List of requests.
- * @apiSuccess {Object} requester Person who made the request
- * @apiSuccess {Object[]} participants People who are accepted to offering help
+ * @apiSuccess {Object[]} data List of requests.
+ * @apiSuccess {Object[]} pagination Pagination Details.
  * @apiUse RequestModel
  *
  * @apiError (400 Bad Request) {String} error Location is required.
@@ -258,6 +257,21 @@ requestsRouter.get(
           END AS "alreadyOffered"`;
       }
 
+      const countQuery = `
+      SELECT COUNT(*)::int AS total
+      FROM (
+        SELECT r.id, ${distanceExpr} AS distance
+        FROM "Request" r
+        ${whereClause}
+      ) AS sub
+      ${radiusFilter ? `WHERE sub.distance <= ${radiusFilter}` : ""};
+    `;
+      const countResult: any[] = await prisma.$queryRawUnsafe(
+        countQuery,
+        ...params
+      );
+      const total = countResult[0]?.total || 0;
+
       const query = `
         SELECT sub.*, 
                json_build_object(
@@ -314,9 +328,22 @@ requestsRouter.get(
         }
       }
 
-      return res
-        .status(200)
-        .json({ message: "Requests fetched successfully!", requests });
+      const page =
+        Math.floor(parseInt(offset as string) / parseInt(limit as string)) + 1;
+      const totalPages = Math.ceil(total / parseInt(limit as string));
+
+      return res.status(200).json({
+        data: requests,
+        pagination: {
+          total,
+          page,
+          limit: parseInt(limit as string),
+          totalPages,
+          hasNextPage: page < totalPages,
+          hasPrevPage: page > 1,
+        },
+        message: "Requests fetched successfully!",
+      });
     } catch (error) {
       console.error("Get requests error:", error);
       return res.status(500).json({ error: "Internal server error" });
