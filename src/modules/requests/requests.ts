@@ -174,14 +174,6 @@ requestsRouter.get(
         radius,
       } = req.query;
 
-      if (!location_lat || !location_lng) {
-        return res.status(400).json({ error: "Location is required" });
-      }
-
-      const lat = parseFloat(location_lat as string);
-      const lng = parseFloat(location_lng as string);
-      const radiusFilter = radius ? parseFloat(radius as string) : null;
-
       const parseBool = (val: any) =>
         val === "true" ? true : val === "false" ? false : undefined;
 
@@ -216,10 +208,13 @@ requestsRouter.get(
         filters.push(`"moderation_status" = $${params.length + 1}`);
         params.push(moderation_status);
       }
+
+      // user-specific filter (don’t show own requests)
       if (req.role === "user") {
         filters.push(`r.user_id != $${params.length + 1}`);
         params.push(req.userId);
       }
+
       if (search) {
         filters.push(
           `("title" ILIKE $${params.length + 1} OR "description" ILIKE $${
@@ -233,17 +228,32 @@ requestsRouter.get(
         ? `WHERE ${filters.join(" AND ")}`
         : "";
 
-      const distanceExpr = `(6371000 * acos(cos(radians($${
-        params.length + 1
-      })) * cos(radians("location_lat")) * cos(radians("location_lng") - radians($${
-        params.length + 2
-      })) + sin(radians($${
-        params.length + 1
-      })) * sin(radians("location_lat"))))`;
-      params.push(lat, lng);
+      // -------------------------------------
+      // LOCATION / DISTANCE only for users
+      // -------------------------------------
+      let distanceExpr = "0"; // fallback for admin
+      let radiusFilter: number | null = null;
+
+      if (req.role === "user") {
+        if (!location_lat || !location_lng) {
+          return res.status(400).json({ error: "Location is required" });
+        }
+
+        const lat = parseFloat(location_lat as string);
+        const lng = parseFloat(location_lng as string);
+        radiusFilter = radius ? parseFloat(radius as string) : null;
+
+        distanceExpr = `(6371000 * acos(
+          cos(radians($${params.length + 1}))
+          * cos(radians("location_lat"))
+          * cos(radians("location_lng") - radians($${params.length + 2}))
+          + sin(radians($${params.length + 1}))
+          * sin(radians("location_lat"))
+        ))`;
+        params.push(lat, lng);
+      }
 
       let selectExtra = "";
-
       if (req.role === "user") {
         selectExtra = `, 
           CASE 
@@ -257,21 +267,27 @@ requestsRouter.get(
           END AS "alreadyOffered"`;
       }
 
+      // ---------- COUNT QUERY ----------
       const countQuery = `
-      SELECT COUNT(*)::int AS total
-      FROM (
-        SELECT r.id, ${distanceExpr} AS distance
-        FROM "Request" r
-        ${whereClause}
-      ) AS sub
-      ${radiusFilter ? `WHERE sub.distance <= ${radiusFilter}` : ""};
-    `;
+        SELECT COUNT(*)::int AS total
+        FROM (
+          SELECT r.id, ${distanceExpr} AS distance
+          FROM "Request" r
+          ${whereClause}
+        ) AS sub
+        ${
+          req.role === "user" && radiusFilter
+            ? `WHERE sub.distance <= ${radiusFilter}`
+            : ""
+        };
+      `;
       const countResult: any[] = await prisma.$queryRawUnsafe(
         countQuery,
         ...params
       );
       const total = countResult[0]?.total || 0;
 
+      // ---------- DATA QUERY ----------
       const query = `
         SELECT sub.*, 
                json_build_object(
@@ -281,29 +297,29 @@ requestsRouter.get(
                  'email', u.email,
                  'profile_picture_url', u.profile_picture_url
                ) AS requester,
-                 (
-         SELECT COALESCE(
-           json_agg(
-             json_build_object(
-               'id', rp.id,
-               'status', rp.status,
-               'created_at', rp.created_at,
-               'updated_at', rp.updated_at,
-               'user', json_build_object(
-                 'id', pu.id,
-                 'full_name', pu.full_name,
-                 'username', pu.username,
-                 'email', pu.email,
-                 'profile_picture_url', pu.profile_picture_url
-               )
-             )
-           ), '[]'
-         )
-         FROM "RequestParticipator" rp
-         JOIN "User" pu ON pu.id = rp.user_id
-         WHERE rp.request_id = sub.id
-           AND rp.status = 'accepted'
-       ) AS participants
+               (
+                 SELECT COALESCE(
+                   json_agg(
+                     json_build_object(
+                       'id', rp.id,
+                       'status', rp.status,
+                       'created_at', rp.created_at,
+                       'updated_at', rp.updated_at,
+                       'user', json_build_object(
+                         'id', pu.id,
+                         'full_name', pu.full_name,
+                         'username', pu.username,
+                         'email', pu.email,
+                         'profile_picture_url', pu.profile_picture_url
+                       )
+                     )
+                   ), '[]'
+                 )
+                 FROM "RequestParticipator" rp
+                 JOIN "User" pu ON pu.id = rp.user_id
+                 WHERE rp.request_id = sub.id
+                   AND rp.status = 'accepted'
+               ) AS participants
                ${selectExtra}
         FROM (
           SELECT r.*, ${distanceExpr} AS distance
@@ -311,8 +327,12 @@ requestsRouter.get(
           ${whereClause}
         ) AS sub
         JOIN "User" u ON sub.user_id = u.id
-        ${radiusFilter ? `WHERE sub.distance <= ${radiusFilter}` : ""}
-        ORDER BY sub.distance ASC, sub.created_at DESC
+        ${
+          req.role === "user" && radiusFilter
+            ? `WHERE sub.distance <= ${radiusFilter}`
+            : ""
+        }
+        ORDER BY sub.created_at DESC
         OFFSET ${parseInt(offset as string)}
         LIMIT ${parseInt(limit as string)};
       `;
