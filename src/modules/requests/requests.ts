@@ -6,6 +6,7 @@ import { Prisma } from "../../../generated/prisma/index.js";
 import upload from "../../middleware/multer.js";
 import { createSignedUrls } from "../../utils/createSignedURL.js";
 import { verifyRole } from "../../middleware/verifyRole.js";
+import { keysToCamel } from "../../utils/camelize.js";
 
 export const requestsRouter = Router();
 
@@ -19,20 +20,15 @@ export const requestsRouter = Router();
  * @apiBody {String} title Title of the request (required).
  * @apiBody {String} [description] Optional detailed description of the request.
  * @apiBody {String} [category="general"] Category of the request.
- * @apiBody {String="normal","high","low"} [urgency_level="normal"] Urgency level.
- * @apiBody {Number} location_lat Latitude of the request location (required).
- * @apiBody {Number} location_lng Longitude of the request location (required).
- * @apiBody {Boolean} [post_anonymously=false] Whether to post the request anonymously.
- * @apiBody {Boolean} [visibility_verified_only=false] Whether only verified users can see.
- * @apiBody {Boolean} [visibility_women_only=false] Whether only women can see.
- * @apiBody {Boolean} [allow_multiple_helpers=false] Whether multiple helpers are allowed.
- * @apiBody {Number} [max_helpers] Maximum number of helpers.
+ * @apiBody {String="normal","high","low"} [urgencyLevel="normal"] Urgency level.
+ * @apiBody {Number} locationLat Latitude of the request location (required).
+ * @apiBody {Number} locationLng Longitude of the request location (required).
+ * @apiBody {Boolean} [postAnonymously=false] Whether to post the request anonymously.
+ * @apiBody {Boolean} [visibilityVerifiedOnly=false] Whether only verified users can see.
+ * @apiBody {Boolean} [visibilityWomenOnly=false] Whether only women can see.
+ * @apiBody {Number} [maxHelpers] Maximum number of helpers.
  * @apiBody {File[]} [attachments] Array of files to attach (multipart/form-data, optional).
  *
- * @apiSuccess {String} message Response message.
- * @apiUse RequestModel
- *
- * @apiError {String} error Error message describing what went wrong.
  */
 requestsRouter.post(
   "/",
@@ -43,19 +39,19 @@ requestsRouter.post(
       title,
       description,
       category,
-      urgency_level,
-      location_lat,
-      location_lng,
-      post_anonymously,
-      visibility_verified_only,
-      visibility_women_only,
-      max_helpers,
+      urgencyLevel,
+      locationLat,
+      locationLng,
+      postAnonymously,
+      visibilityVerifiedOnly,
+      visibilityWomenOnly,
+      maxHelpers,
     } = req.body || {};
 
     if (!title) {
       return res.status(400).json({ error: "Title is required" });
     }
-    if (!location_lat || !location_lng) {
+    if (!locationLat || !locationLng) {
       return res.status(400).json({ error: "Location is required" });
     }
 
@@ -68,14 +64,14 @@ requestsRouter.post(
             userId,
             title,
             description,
-            category: category || "general",
-            urgencyLevel: urgency_level || "normal",
-            locationLat: parseFloat(location_lat),
-            locationLng: parseFloat(location_lng),
-            postAnonymously: post_anonymously || false,
-            visibilityVerifiedOnly: visibility_verified_only || false,
-            visibilityWomenOnly: visibility_women_only || false,
-            maxHelpers: max_helpers ? parseInt(max_helpers) : 1,
+            category,
+            urgencyLevel,
+            locationLat,
+            locationLng,
+            postAnonymously,
+            visibilityVerifiedOnly,
+            visibilityWomenOnly,
+            maxHelpers: maxHelpers ? parseInt(maxHelpers) : 1,
             attachments: [],
           },
         });
@@ -131,27 +127,20 @@ requestsRouter.post(
  *
  * @apiHeader {String} Authorization Bearer token (JWT Access Token).
  *
- * @apiQuery {String} location_lat Latitude of current location (required).
- * @apiQuery {String} location_lng Longitude of current location (required).
+ * @apiQuery {String} locationLat Latitude of current location (required for user).
+ * @apiQuery {String} locationLng Longitude of current location (required for user).
  * @apiQuery {Number} [radius] Search radius in meters (optional).
  * @apiQuery {String} [category] Filter by request category.
- * @apiQuery {String=normal,high,low} [urgency_level] Filter by urgency level.
+ * @apiQuery {String=normal,high,low} [urgencyLevel] Filter by urgency level.
  * @apiQuery {String=pending,partially_accepted,accepted,completed,cancelled,expired} [status] Filter by request status.
- * @apiQuery {Boolean} [post_anonymously] Filter by anonymity.
- * @apiQuery {Boolean} [visibility_verified_only] Filter by verified-only visibility.
- * @apiQuery {Boolean} [visibility_women_only] Filter by women-only visibility.
- * @apiQuery {String=clean,flagged,reviewed,blocked} [moderation_status] Filter by moderation status.
+ * @apiQuery {Boolean} [postAnonymously] Filter by anonymity.
+ * @apiQuery {Boolean} [visibilityVerifiedOnly] Filter by verified-only visibility.
+ * @apiQuery {Boolean} [visibilityWomenOnly] Filter by women-only visibility.
+ * @apiQuery {String=clean,flagged,reviewed,blocked} [moderationStatus] Filter by moderation status.
  * @apiQuery {String} [search] Search in title and description.
  * @apiQuery {Number} [limit=20] Limit number of results.
  * @apiQuery {Number} [offset=0] Offset for pagination.
  *
- * @apiSuccess {String} message Success Message
- * @apiSuccess {Object[]} data List of requests.
- * @apiSuccess {Object[]} pagination Pagination Details.
- * @apiUse RequestModel
- *
- * @apiError (400 Bad Request) {String} error Location is required.
- * @apiError (500 Internal Server Error) {String} error Unexpected server error.
  */
 requestsRouter.get(
   "/",
@@ -162,15 +151,15 @@ requestsRouter.get(
         category,
         limit = "20",
         offset = "0",
-        urgency_level,
+        urgencyLevel,
         search,
         status,
-        post_anonymously,
-        visibility_verified_only,
-        visibility_women_only,
-        moderation_status,
-        location_lat,
-        location_lng,
+        postAnonymously,
+        visibilityVerifiedOnly,
+        visibilityWomenOnly,
+        moderationStatus,
+        locationLat,
+        locationLng,
         radius,
       } = req.query;
 
@@ -181,34 +170,34 @@ requestsRouter.get(
       const params: any[] = [];
 
       if (category) {
-        filters.push(`"category" = $${params.length + 1}`);
+        filters.push(`"category" = $${params.length + 1}::"RequestCategory"`);
         params.push(category);
       }
-      if (urgency_level) {
+      if (urgencyLevel) {
         filters.push(`"urgency_level" = $${params.length + 1}::"UrgencyLevel"`);
-        params.push(urgency_level);
+        params.push(urgencyLevel);
       }
       if (status) {
         filters.push(`"status" = $${params.length + 1}::"RequestStatus"`);
         params.push(status);
       }
-      if (post_anonymously) {
+      if (postAnonymously) {
         filters.push(`"post_anonymously" = $${params.length + 1}`);
-        params.push(parseBool(post_anonymously));
+        params.push(parseBool(postAnonymously));
       }
-      if (visibility_verified_only) {
+      if (visibilityVerifiedOnly) {
         filters.push(`"visibility_verified_only" = $${params.length + 1}`);
-        params.push(parseBool(visibility_verified_only));
+        params.push(parseBool(visibilityVerifiedOnly));
       }
-      if (visibility_women_only) {
+      if (visibilityWomenOnly) {
         filters.push(`"visibility_women_only" = $${params.length + 1}`);
-        params.push(parseBool(visibility_women_only));
+        params.push(parseBool(visibilityWomenOnly));
       }
-      if (moderation_status) {
+      if (moderationStatus) {
         filters.push(
           `"moderation_status" = $${params.length + 1}::"ModerationStatus"`
         );
-        params.push(moderation_status);
+        params.push(moderationStatus);
       }
 
       if (req.role === "user") {
@@ -233,12 +222,12 @@ requestsRouter.get(
       let radiusFilter: number | null = null;
 
       if (req.role === "user") {
-        if (!location_lat || !location_lng) {
+        if (!locationLat || !locationLng) {
           return res.status(400).json({ error: "Location is required" });
         }
 
-        const lat = parseFloat(location_lat as string);
-        const lng = parseFloat(location_lng as string);
+        const lat = parseFloat(locationLat as string);
+        const lng = parseFloat(locationLng as string);
         radiusFilter = radius ? parseFloat(radius as string) : null;
 
         distanceExpr = `(6371000 * acos(
@@ -285,57 +274,42 @@ requestsRouter.get(
       const total = countResult[0]?.total || 0;
 
       const query = `
-        SELECT sub.*, 
-               json_build_object(
-                 'id', u.id,
-                 'full_name', u.full_name,
-                 'username', u.username,
-                 'email', u.email,
-                 'profile_picture_url', u.profile_picture_url
-               ) AS requester,
-               (
-                 SELECT COALESCE(
-                   json_agg(
-                     json_build_object(
-                       'id', rp.id,
-                       'status', rp.status,
-                       'created_at', rp.created_at,
-                       'updated_at', rp.updated_at,
-                       'user', json_build_object(
-                         'id', pu.id,
-                         'full_name', pu.full_name,
-                         'username', pu.username,
-                         'email', pu.email,
-                         'profile_picture_url', pu.profile_picture_url
-                       )
-                     )
-                   ), '[]'
-                 )
-                 FROM "RequestParticipator" rp
-                 JOIN "User" pu ON pu.id = rp.user_id
-                 WHERE rp.request_id = sub.id
-                   AND rp.status = 'accepted'
-               ) AS participants
-               ${selectExtra}
-        FROM (
-          SELECT r.*, ${distanceExpr} AS distance
-          FROM "Request" r
-          ${whereClause}
-        ) AS sub
-        JOIN "User" u ON sub.user_id = u.id
-        ${
-          req.role === "user" && radiusFilter
-            ? `WHERE sub.distance <= ${radiusFilter}`
-            : ""
-        }
-        ORDER BY sub.created_at DESC
-        OFFSET ${parseInt(offset as string)}
-        LIMIT ${parseInt(limit as string)};
-      `;
+      SELECT sub.*, 
+             json_build_object(
+               'id', u.id,
+               'full_name', u.full_name,
+               'username', u.username,
+               'email', u.email,
+               'profile_picture_url', u.profile_picture_url
+             ) AS requester,
+             (
+               SELECT COUNT(*)::int
+               FROM "RequestParticipator" rp
+               WHERE rp.request_id = sub.id
+                 AND rp.status = 'accepted'
+             ) AS participants_count
+             ${selectExtra}
+      FROM (
+        SELECT r.*, ${distanceExpr} AS distance
+        FROM "Request" r
+        ${whereClause}
+      ) AS sub
+      JOIN "User" u ON sub.user_id = u.id
+      ${
+        req.role === "user" && radiusFilter
+          ? `WHERE sub.distance <= ${radiusFilter}`
+          : ""
+      }
+      ORDER BY sub.created_at DESC
+      OFFSET ${parseInt(offset as string)}
+      LIMIT ${parseInt(limit as string)};
+    `;
 
       const requests: any[] = await prisma.$queryRawUnsafe(query, ...params);
 
-      for (const request of requests) {
+      const camelizedRequests = keysToCamel<any[]>(requests);
+
+      for (const request of camelizedRequests) {
         if (
           Array.isArray(request.attachments) &&
           request.attachments.length > 0
@@ -349,7 +323,7 @@ requestsRouter.get(
       const totalPages = Math.ceil(total / parseInt(limit as string));
 
       return res.status(200).json({
-        data: requests,
+        data: camelizedRequests,
         pagination: {
           total,
           page,
@@ -368,43 +342,50 @@ requestsRouter.get(
 );
 
 /**
- * @api {patch} /requests/offer Offer Help To Request
- * @apiName OfferHelp
+ * @api {patch} /requests/participate Participate In Request to Help
+ * @apiName Participate
  * @apiGroup Requests
  * @apiPermission authenticated
  *
  * @apiHeader {String} Authorization Bearer token (JWT Access Token).
  *
- * @apiBody {String} request_id ID of the request to offer help to (required).
+ * @apiBody {String} requestId ID of the request to participate in (required)
  *
- * @apiSuccess {String} message Success message.
- * @apiUse RequestParticipatorModel
- *
- * @apiError (400 Bad Request) {String} error Already offered help to this request.
- * @apiError (500 Internal Server Error) {String} error Unexpected server error.
  */
 requestsRouter.post(
-  "/offer",
+  "/participate",
   verifyAccessToken,
   async (req: Request, res: Response) => {
     try {
-      const { request_id } = req.body || {};
+      const { requestId } = req.body || {};
       const userId = req.userId!;
 
-      if (!request_id) {
+      if (!requestId) {
         return res.status(400).json({ error: "Request ID is required" });
+      }
+
+      const request = await prisma.request.findUnique({
+        where: { id: requestId },
+      });
+      if (!request) {
+        return res.status(404).json({ error: "Request not found" });
+      }
+      if (request.userId === userId) {
+        return res
+          .status(400)
+          .json({ error: "You cannot participate on your own request" });
       }
 
       const participator = await prisma.requestParticipator.create({
         data: {
-          requestId: request_id,
+          requestId,
           userId,
           status: "pending",
         },
       });
 
       return res.status(201).json({
-        message: "Help offered successfully",
+        message: "Help Participation offered successfully",
         participator,
       });
     } catch (error: any) {
@@ -428,31 +409,23 @@ requestsRouter.post(
  *
  * @apiHeader {String} Authorization Bearer token (JWT Access Token).
  *
- * @apiBody {String} participator_id ID of the participator to accept (required).
+ * @apiBody {String} participatorId ID of the participator to accept (required).
  *
- * @apiSuccess {String} message Success message.
- * @apiUse RequestModel
- * @apiUse RequestParticipatorModel
- *
- * @apiError (400 Bad Request) {String} error Cannot accept participator (already accepted/withdrawn/rejected).
- * @apiError (403 Forbidden) {String} error Not authorized to accept participator of this request.
- * @apiError (404 Not Found) {String} error Participator not found.
- * @apiError (500 Internal Server Error) {String} error Unexpected server error.
  */
 requestsRouter.patch(
   "/accept-participator",
   verifyAccessToken,
   async (req: Request, res: Response) => {
     try {
-      const { participator_id } = req.body;
+      const { participatorId } = req.body;
       const userId = req.userId!;
 
-      if (!participator_id) {
+      if (!participatorId) {
         return res.status(400).json({ error: "participatorId is required" });
       }
 
       const participator = await prisma.requestParticipator.findUnique({
-        where: { id: participator_id },
+        where: { id: participatorId },
         include: { request: true },
       });
 
@@ -494,7 +467,7 @@ requestsRouter.patch(
         }
 
         const updatedParticipator = await tx.requestParticipator.update({
-          where: { id: participator_id },
+          where: { id: participatorId },
           data: { status: "accepted" },
         });
 
@@ -536,30 +509,23 @@ requestsRouter.patch(
  *
  * @apiHeader {String} Authorization Bearer token (JWT Access Token).
  *
- * @apiBody {String} participator_id ID of the participator to reject (required).
+ * @apiBody {String} participatorId ID of the participator to reject (required).
  *
- * @apiSuccess {String} message Success message.
- * @apiUse RequestParticipatorModel
- *
- * @apiError (400 Bad Request) {String} error Cannot reject participator (already accepted/withdrawn/rejected).
- * @apiError (403 Forbidden) {String} error Not authorized to reject participator of this request.
- * @apiError (404 Not Found) {String} error Participator not found.
- * @apiError (500 Internal Server Error) {String} error Unexpected server error.
  */
 requestsRouter.patch(
   "/reject-participator",
   verifyAccessToken,
   async (req: Request, res: Response) => {
     try {
-      const { participator_id } = req.body;
+      const { participatorId } = req.body;
       const userId = req.userId!;
 
-      if (!participator_id) {
+      if (!participatorId) {
         return res.status(400).json({ error: "participatorId is required" });
       }
 
       const participator = await prisma.requestParticipator.findUnique({
-        where: { id: participator_id },
+        where: { id: participatorId },
         include: { request: true },
       });
 
@@ -592,7 +558,7 @@ requestsRouter.patch(
       }
 
       const updatedParticipator = await prisma.requestParticipator.update({
-        where: { id: participator_id },
+        where: { id: participatorId },
         data: { status: "rejected" },
       });
 
@@ -615,15 +581,7 @@ requestsRouter.patch(
  *
  * @apiHeader {String} Authorization Bearer token (JWT Access Token).
  *
- * @apiBody {String} request_id ID of the request to cancel (required).
- *
- * @apiSuccess {String} message Response message.
- * @apiUse RequestModel
- *
- * @apiError (400 Bad Request) {String} message Request cannot be cancelled (already completed/cancelled).
- * @apiError (403 Forbidden) {String} message Not authorized to cancel this request.
- * @apiError (404 Not Found) {String} message Request not found.
- * @apiError (500 Internal Server Error) {String} message Unexpected error.
+ * @apiBody {String} requestId ID of the request to cancel (required).
  */
 requestsRouter.patch(
   "/cancel",
@@ -631,14 +589,14 @@ requestsRouter.patch(
   async (req: Request, res: Response) => {
     try {
       const userId = req.userId!;
-      const { request_id } = req.body;
+      const { requestId } = req.body;
 
-      if (!request_id) {
+      if (!requestId) {
         return res.status(400).json({ message: "requestId is required" });
       }
 
       const request = await prisma.request.findUnique({
-        where: { id: request_id },
+        where: { id: requestId },
       });
 
       if (!request) {
@@ -651,14 +609,18 @@ requestsRouter.patch(
           .json({ message: "Not authorized to cancel this request" });
       }
 
-      if (request.status === "completed" || request.status === "cancelled") {
+      if (
+        request.status === "completed" ||
+        request.status === "cancelled" ||
+        request.status === "expired"
+      ) {
         return res
           .status(400)
           .json({ message: `Cannot cancel a ${request.status} request` });
       }
 
       const updatedRequest = await prisma.request.update({
-        where: { id: request_id },
+        where: { id: requestId },
         data: { status: "cancelled" },
       });
 
@@ -674,38 +636,34 @@ requestsRouter.patch(
 );
 
 /**
- * @api {patch} /requests/moderation Update Moderation Status
+ * @api {patch} /requests/moderation-status Update Moderation Status
  * @apiName UpdateModerationStatus
  * @apiGroup Requests
  * @apiPermission admin
  *
  * @apiHeader {String} Authorization Bearer token (JWT Access Token).
  *
- * @apiBody {String} request_id ID of the request to update (required).
- * @apiBody {String="clean","flagged","reviewed","blocked"} moderation_status New moderation status (required).
+ * @apiBody {String} requestId ID of the request to update (required).
+ * @apiBody {String="clean","flagged","reviewed","blocked"} moderationStatus New moderation status (required).
  *
- * @apiSuccess {String} message Response message.
- * @apiUse RequestModel
- *
- * @apiError {String} error Error message if update fails.
  */
 requestsRouter.patch(
-  "/moderation",
+  "/moderation-status",
   verifyAccessToken,
   verifyRole(["admin"]),
   async (req: Request, res: Response) => {
     try {
-      const { request_id, moderation_status } = req.body;
+      const { requestId, moderationStatus } = req.body;
 
-      if (!request_id || !moderation_status) {
+      if (!requestId || !moderationStatus) {
         return res
           .status(400)
-          .json({ error: "request_id and moderation_status are required" });
+          .json({ error: "requestId and moderationStatus are required" });
       }
 
       const updatedRequest = await prisma.request.update({
-        where: { id: request_id },
-        data: { moderationStatus: moderation_status },
+        where: { id: requestId },
+        data: { moderationStatus },
       });
 
       return res.status(200).json({
@@ -720,34 +678,29 @@ requestsRouter.patch(
 );
 
 /**
- * @api {patch} /requests/withdraw-offer Withdraw Offer
- * @apiName WithdrawOffer
+ * @api {patch} /requests/withdraw-participation Withdraw Participation Offer
+ * @apiName WithdrawHelpOffer
  * @apiGroup Requests
  *
  * @apiHeader {String} Authorization Bearer token (JWT Access Token).
  *
- * @apiBody {String} participator_id ID of the participator record to withdraw (required).
- *
- * @apiSuccess {String} message Response message.
- * @apiUse RequestParticipatorModel
- *
- * @apiError {String} error Error message describing why withdrawal failed.
+ * @apiBody {String} participatorId ID of the participator record to withdraw (required).
  */
 requestsRouter.patch(
-  "/withdraw-offer",
+  "/withdraw-participation",
   verifyAccessToken,
   async (req: Request, res: Response) => {
     try {
-      const { participator_id } = req.body || {};
+      const { participatorId } = req.body || {};
       const userId = req.userId!;
 
-      if (!participator_id) {
+      if (!participatorId) {
         return res.status(400).json({ error: "participatorId is required" });
       }
 
       const result = await prisma.$transaction(async (tx) => {
         const participator = await tx.requestParticipator.findUnique({
-          where: { id: participator_id },
+          where: { id: participatorId },
           include: { request: true },
         });
 
@@ -756,20 +709,19 @@ requestsRouter.patch(
         }
 
         if (participator.userId !== userId) {
-          throw new Error("You are not allowed to withdraw this offer");
+          throw new Error(
+            "You are not allowed to withdraw this participation offer"
+          );
         }
 
-        if (
-          participator.status === "accepted" ||
-          participator.status == "rejected"
-        ) {
+        if (participator.status !== "pending") {
           throw new Error(
-            "Cannot withdraw an offer that has already been accepted/rejected"
+            `Cannot withdraw an offer that has already been ${participator.status}`
           );
         }
 
         const updatedParticipator = await tx.requestParticipator.update({
-          where: { id: participator_id },
+          where: { id: participatorId },
           data: { status: "withdrawn" },
         });
 
@@ -777,7 +729,7 @@ requestsRouter.patch(
       });
 
       return res.status(200).json({
-        message: "Offer withdrawn",
+        message: "Participation Offer withdrawn",
         participator: result,
       });
     } catch (error: any) {

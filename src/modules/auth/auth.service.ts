@@ -5,7 +5,7 @@ export function generateAccessToken(payload: object) {
     payload,
     process.env.JWT_ACCESS_SECRET || "fallbacktoverysecretkeyhehe",
     {
-      expiresIn: "15m",
+      expiresIn: "1d",
     }
   );
 }
