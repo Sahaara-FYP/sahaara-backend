@@ -90,7 +90,7 @@ model Alert {
 
   title           String   @db.VarChar(255)
   description     String?   @db.Text
-  category        String @default("general")
+  category        AlertCategory @default(general)
   urgencyLevel    UrgencyLevel @map("urgency_level") @default(normal)
   locationLat     Decimal  @db.Decimal(10, 7) @map("location_lat")
   locationLng     Decimal  @db.Decimal(10, 7) @map("location_lng")
@@ -109,11 +109,13 @@ model AlertAcknowledgement {
   id        String @id @default(uuid())
   alertId   String @map("alert_id")
   userId    String @map("user_id")
+  comments String?
 
   alert     Alert  @relation(fields: [alertId], references: [id], onDelete: Cascade)
   user      User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
+  updatedAt       DateTime @updatedAt @map("updated_at") @default(now())
 
   @@unique([alertId, userId])
 }
@@ -186,4 +188,17 @@ enum UserRole {
   moderator
 }
 
-
+enum AlertCategory {
+  general
+  emergency
+  health
+  security
+  weather
+  traffic
+  missing_person
+  lost_and_found
+  natural_disaster
+  community_notice
+  event
+  other
+}

@@ -66,12 +66,12 @@ requestsRouter.post(
             description,
             category,
             urgencyLevel,
-            locationLat,
-            locationLng,
+            locationLat: parseFloat(locationLat),
+            locationLng: parseFloat(locationLng),
             postAnonymously,
             visibilityVerifiedOnly,
             visibilityWomenOnly,
-            maxHelpers: maxHelpers ? parseInt(maxHelpers) : 1,
+            maxHelpers,
             attachments: [],
           },
         });
@@ -336,6 +336,118 @@ requestsRouter.get(
       });
     } catch (error) {
       console.error("Get requests error:", error);
+      return res.status(500).json({ error: "Internal server error" });
+    }
+  }
+);
+
+/**
+ * @api {patch} /requests Update a Request
+ * @apiName UpdateRequest
+ * @apiGroup Requests
+ *
+ * @apiHeader {String} Authorization Bearer token (JWT) from login.
+ *
+ * @apiBody {String} requestId ID of the request (required).
+ * @apiBody {String} [title] Title of the request.
+ * @apiBody {String} [description] Optional detailed description of the request.
+ * @apiBody {String} [category] Category of the request.
+ * @apiBody {String="normal","high","low"} [urgencyLevel] Urgency level.
+ * @apiBody {Number} [locationLat] Latitude of the request location.
+ * @apiBody {Number} [locationLng] Longitude of the request location.
+ * @apiBody {Boolean} [postAnonymously] Whether to post the request anonymously.
+ * @apiBody {Boolean} [visibilityVerifiedOnly] Whether only verified users can see.
+ * @apiBody {Boolean} [visibilityWomenOnly] Whether only women can see.
+ * @apiBody {Number} [maxHelpers] Maximum number of helpers.
+ * @apiBody {File[]} [attachments] Array of files to attach (multipart/form-data, optional).
+ *
+ */
+requestsRouter.patch(
+  "/",
+  verifyAccessToken,
+  upload.array("attachments"),
+  async (req: Request, res: Response) => {
+    try {
+      const { requestId } = req.body || {};
+      const userId = req.userId!;
+
+      const existingRequest = await prisma.request.findUnique({
+        where: { id: requestId },
+      });
+      if (!existingRequest) {
+        return res.status(404).json({ error: "Request not found" });
+      }
+
+      if (existingRequest.userId !== userId) {
+        return res
+          .status(403)
+          .json({ error: "Not authorized to update this request" });
+      }
+
+      const {
+        title,
+        description,
+        category,
+        urgencyLevel,
+        locationLat,
+        locationLng,
+        postAnonymously,
+        visibilityVerifiedOnly,
+        visibilityWomenOnly,
+        maxHelpers,
+      } = req.body || {};
+
+      const attachments: string[] = [];
+
+      if (req.files && Array.isArray(req.files)) {
+        for (const file of req.files as Express.Multer.File[]) {
+          const safeName = file.originalname.replace(/\s+/g, "_");
+          const filePath = `requests/${requestId}/${Date.now()}_${safeName}`;
+
+          const { data, error } = await supabase.storage
+            .from("attachments")
+            .upload(filePath, file.buffer, {
+              cacheControl: "3600",
+              upsert: false,
+            });
+
+          if (error) {
+            console.error("Supabase upload error:", error);
+            continue;
+          }
+          attachments.push(data.path);
+        }
+      }
+
+      const updatedRequest = await prisma.request.update({
+        where: { id: requestId },
+        data: {
+          title,
+          category,
+          description,
+          urgencyLevel,
+          ...(locationLat !== undefined && {
+            locationLat: parseFloat(locationLat),
+          }),
+          ...(locationLng !== undefined && {
+            locationLng: parseFloat(locationLng),
+          }),
+          postAnonymously,
+          visibilityVerifiedOnly,
+          visibilityWomenOnly,
+          maxHelpers,
+          ...(attachments.length > 0 && {
+            attachments,
+          }),
+        },
+      });
+
+      return res.status(200).json({
+        message: "Request updated successfully",
+        request: updatedRequest,
+      });
+    } catch (error) {
+      console.error("Update request error:", error);
       return res.status(500).json({ error: "Internal server error" });
     }
   }

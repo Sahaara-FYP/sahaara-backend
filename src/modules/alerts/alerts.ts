@@ -18,30 +18,11 @@ export const alertsRouter = Router();
  * @apiBody {String} title                 Title of the alert (required).
  * @apiBody {String} [description]         Detailed description of the alert.
  * @apiBody {String} [category="general"]  Category of the alert.
- * @apiBody {String="normal","high","low"} [urgency_level="normal"] Urgency level.
- * @apiBody {Number} location_lat          Latitude of the alert location (required).
- * @apiBody {Number} location_lng          Longitude of the alert location (required).
- * @apiBody {File[]} [attachments]         Optional file attachments (images, PDFs, etc.).
+ * @apiBody {String="normal","high","low"} [urgencyLevel="normal"] Urgency level.
+ * @apiBody {Number} locationLat          Latitude of the alert location (required).
+ * @apiBody {Number} locationLng          Longitude of the alert location (required).
+ * @apiBody {File[]} [attachments]         Optional file attachments (multipart formdata).
  *
- * @apiSuccess {Boolean} success           Indicates if request was successful.
- * @apiSuccess {String} message            Success message.
- * @apiSuccess {Object} alert              The created Alert object.
- * @apiSuccess {String} alert.id           Unique identifier of the alert.
- * @apiSuccess {String} alert.userId       ID of the user who created the alert.
- * @apiSuccess {String} alert.title        Title of the alert.
- * @apiSuccess {String} [alert.description] Description of the alert.
- * @apiSuccess {String} alert.category     Category of the alert.
- * @apiSuccess {String} alert.urgencyLevel Urgency level.
- * @apiSuccess {Number} alert.locationLat  Latitude of the alert.
- * @apiSuccess {Number} alert.locationLng  Longitude of the alert.
- * @apiSuccess {Json[]} [alert.attachments] List of uploaded attachment paths.
- * @apiSuccess {String="active","resolved","expired","cancelled"} alert.status Current status of the alert.
- * @apiSuccess {String="clean","flagged","reviewed","blocked"} alert.moderationStatus Moderation status.
- * @apiSuccess {String} alert.createdAt    Timestamp of creation.
- * @apiSuccess {String} alert.updatedAt    Timestamp of last update.
- *
- * @apiError (400 Bad Request) {String} error Title or Location is missing.
- * @apiError (500 Internal Server Error) {String} error Unexpected server error.
  */
 alertsRouter.post(
   "/",
@@ -53,15 +34,15 @@ alertsRouter.post(
       title,
       description,
       category,
-      urgency_level,
-      location_lat,
-      location_lng,
+      urgencyLevel,
+      locationLat,
+      locationLng,
     } = req.body || {};
 
     if (!title) {
       return res.status(400).json({ error: "Title is required" });
     }
-    if (!location_lat || !location_lng) {
+    if (!locationLat || !locationLng) {
       return res.status(400).json({ error: "Location is required" });
     }
 
@@ -72,10 +53,10 @@ alertsRouter.post(
             userId,
             title,
             description,
-            category: category || "general",
-            urgencyLevel: urgency_level || "normal",
-            locationLat: parseFloat(location_lat),
-            locationLng: parseFloat(location_lng),
+            category,
+            urgencyLevel,
+            locationLat: parseFloat(locationLat),
+            locationLng: parseFloat(locationLng),
             attachments: [],
           },
         });
@@ -113,7 +94,6 @@ alertsRouter.post(
       });
 
       return res.status(201).json({
-        success: true,
         message: "Alert created successfully",
         alert: newAlert,
       });
@@ -232,6 +212,184 @@ alertsRouter.get(
       return res.status(200).json({ success: true, alerts });
     } catch (error) {
       console.error("Get alerts error:", error);
+      return res.status(500).json({ error: "Internal server error" });
+    }
+  }
+);
+
+/**
+ * @api {post} /alerts/acknowledgement Acknowledge an Alert
+ * @apiName AcknowledgeAlert
+ * @apiGroup Alerts
+ *
+ * @apiHeader {String} Authorization Bearer access token.
+ *
+ * @apiBody {String} alertId                 ID of the alert (required).
+ * @apiBody {String} [comments]         Optional Comments.
+ *
+ */
+alertsRouter.post(
+  "/acknowledgement",
+  verifyAccessToken,
+  async (req: Request, res: Response) => {
+    try {
+      const { alertId, comments } = req.body || {};
+      const userId = req.userId!;
+
+      if (!alertId) {
+        return res.status(400).json({ error: "Alert ID is required" });
+      }
+
+      const alert = await prisma.alert.findUnique({
+        where: { id: alertId },
+      });
+      if (!alert) {
+        return res.status(404).json({ error: "Alert not found" });
+      }
+
+      if (alert.userId === userId) {
+        return res
+          .status(400)
+          .json({ error: "You cannot acknowledge your own alert" });
+      }
+
+      const acknowledgement = await prisma.alertAcknowledgement.create({
+        data: {
+          alertId,
+          userId,
+          comments,
+        },
+      });
+
+      return res.status(201).json({
+        message: "Alert acknowledged successfully",
+        acknowledgement,
+      });
+    } catch (error: any) {
+      if (error.code === "P2002") {
+        return res
+          .status(400)
+          .json({ error: "You have already acknowledged this alert" });
+      }
+
+      console.error("Error acknowledging alert:", error);
+      return res.status(500).json({ error: "Internal server error" });
+    }
+  }
+);
+
+/**
+ * @api {patch} /alerts/acknowledgement Update Alert Acknowledgement
+ * @apiName UpdateAlertAcknowledgement
+ * @apiGroup Alerts
+ *
+ * @apiHeader {String} Authorization Bearer access token.
+ *
+ * @apiBody {String} alertId          ID of the alert to update acknowledgement for (required).
+ * @apiBody {String} [comments]       Optional new comment.
+ *
+ */
+alertsRouter.patch(
+  "/acknowledgement",
+  verifyAccessToken,
+  async (req: Request, res: Response) => {
+    try {
+      const { comments, alertId } = req.body || {};
+      const userId = req.userId!;
+
+      if (!alertId) {
+        return res.status(400).json({ error: "Alert ID is required" });
+      }
+
+      const acknowledgement = await prisma.alertAcknowledgement.findUnique({
+        where: {
+          alertId_userId: {
+            alertId,
+            userId,
+          },
+        },
+      });
+
+      if (!acknowledgement) {
+        return res
+          .status(404)
+          .json({ error: "You haven't acknowledged this alert yet" });
+      }
+
+      const updatedAcknowledgement = await prisma.alertAcknowledgement.update({
+        where: {
+          alertId_userId: {
+            alertId,
+            userId,
+          },
+        },
+        data: {
+          comments,
+        },
+      });
+
+      return res.status(200).json({
+        message: "Acknowledgement updated successfully",
+        acknowledgement: updatedAcknowledgement,
+      });
+    } catch (error) {
+      console.error("Error updating acknowledgement:", error);
+      return res.status(500).json({ error: "Internal server error" });
+    }
+  }
+);
+
+/**
+ * @api {delete} /alerts/acknowledgement Revoke Alert Acknowledgement
+ * @apiName RevokeAlertAcknowledgement
+ * @apiGroup Alerts
+ *
+ * @apiHeader {String} Authorization Bearer access token.
+ *
+ * @apiBody {String} alertId   ID of the alert to revoke acknowledgement for (required).
+ *
+ */
+alertsRouter.delete(
+  "/acknowledgement",
+  verifyAccessToken,
+  async (req: Request, res: Response) => {
+    try {
+      const { alertId } = req.body || {};
+      const userId = req.userId!;
+
+      if (!alertId) {
+        return res.status(400).json({ error: "Alert ID is required" });
+      }
+
+      const acknowledgement = await prisma.alertAcknowledgement.findUnique({
+        where: {
+          alertId_userId: {
+            alertId,
+            userId,
+          },
+        },
+      });
+
+      if (!acknowledgement) {
+        return res
+          .status(404)
+          .json({ error: "You haven't acknowledged this alert yet" });
+      }
+
+      await prisma.alertAcknowledgement.delete({
+        where: {
+          alertId_userId: {
+            alertId,
+            userId,
+          },
+        },
+      });
+
+      return res.status(200).json({
+        message: "Acknowledgement revoked successfully",
+      });
+    } catch (error) {
+      console.error("Error revoking acknowledgement:", error);
       return res.status(500).json({ error: "Internal server error" });
     }
   }
