@@ -127,8 +127,8 @@ requestsRouter.post(
  *
  * @apiHeader {String} Authorization Bearer token (JWT Access Token).
  *
- * @apiQuery {String} locationLat Latitude of current location (required for user).
- * @apiQuery {String} locationLng Longitude of current location (required for user).
+ * @apiQuery {String} [locationLat] Latitude of current location (required for user).
+ * @apiQuery {String} [locationLng] Longitude of current location (required for user).
  * @apiQuery {Number} [radius] Search radius in meters (optional).
  * @apiQuery {String} [category] Filter by request category.
  * @apiQuery {String=normal,high,low} [urgencyLevel] Filter by urgency level.
@@ -437,7 +437,10 @@ requestsRouter.patch(
           visibilityWomenOnly,
           maxHelpers,
           ...(attachments.length > 0 && {
-            attachments,
+            attachments: [
+              ...((existingRequest.attachments as Prisma.JsonArray) || []),
+              ...(attachments as Prisma.JsonArray),
+            ],
           }),
         },
       });
@@ -529,7 +532,7 @@ requestsRouter.patch(
   verifyAccessToken,
   async (req: Request, res: Response) => {
     try {
-      const { participatorId } = req.body;
+      const { participatorId } = req.body || {};
       const userId = req.userId!;
 
       if (!participatorId) {
@@ -629,7 +632,7 @@ requestsRouter.patch(
   verifyAccessToken,
   async (req: Request, res: Response) => {
     try {
-      const { participatorId } = req.body;
+      const { participatorId } = req.body || {};
       const userId = req.userId!;
 
       if (!participatorId) {
@@ -701,7 +704,7 @@ requestsRouter.patch(
   async (req: Request, res: Response) => {
     try {
       const userId = req.userId!;
-      const { requestId } = req.body;
+      const { requestId } = req.body || {};
 
       if (!requestId) {
         return res.status(400).json({ message: "requestId is required" });
@@ -765,7 +768,7 @@ requestsRouter.patch(
   verifyRole(["admin"]),
   async (req: Request, res: Response) => {
     try {
-      const { requestId, moderationStatus } = req.body;
+      const { requestId, moderationStatus } = req.body || {};
 
       if (!requestId || !moderationStatus) {
         return res
