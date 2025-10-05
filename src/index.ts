@@ -17,15 +17,15 @@ const __dirname = path.dirname(__filename);
 
 const app: Application = express();
 const PORT = process.env.PORT || 5000;
-
 app.use(
   cors({
-    origin: true,
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true); // Allow mobile apps/Postman
+      callback(null, true); // Allow all origins dynamically
+    },
     credentials: true,
   })
 );
-
-app.options("*", cors());
 
 app.use(express.json());
 app.use(morgan("dev"));
