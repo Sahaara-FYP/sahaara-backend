@@ -10,6 +10,7 @@ import path from "path";
 import { requestsRouter } from "./modules/requests/requests.js";
 import { alertsRouter } from "./modules/alerts/alerts.js";
 import cors from "cors";
+import { usersRouter } from "./modules/users/users.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -17,7 +18,14 @@ const __dirname = path.dirname(__filename);
 const app: Application = express();
 const PORT = process.env.PORT || 5000;
 
-app.use(cors());
+app.use(
+  cors({
+    origin: true,
+    credentials: true,
+  })
+);
+
+app.options("*", cors());
 
 app.use(express.json());
 app.use(morgan("dev"));
@@ -30,6 +38,7 @@ app.get("/", (req: Request, res: Response) => {
 app.use("/api/auth", authRouter);
 app.use("/api/requests", requestsRouter);
 app.use("/api/alerts", alertsRouter);
+app.use("/api/users", usersRouter);
 
 app.use("/api/docs", express.static(path.join(__dirname, "../apidoc")));
 
