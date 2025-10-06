@@ -5,8 +5,80 @@ import upload from "../../middleware/multer.js";
 import prisma from "./../../utils/prisma.js";
 import supabase from "./../../utils/supabase.js";
 import bcrypt from "bcryptjs";
+import crypto from "crypto";
+import { createProfileSchema } from "./users.validation.js";
 
 export const usersRouter = Router();
+
+/**
+ * @api {post} /users/profile Create User Profile When Onboarding
+ * @apiName CreateUserProfile
+ * @apiGroup Users
+ *
+ * @apiHeader {String} Authorization Bearer access token.
+ *
+ * @apiBody {String} fullName              Full name of the user.
+ * @apiBody {String} username              Unique username for the user.
+ * @apiBody {String="male","female"} gender Gender of the user.
+ * @apiBody {String} dateOfBirth           Date of birth in ISO format (YYYY-MM-DD).
+ * @apiBody {String} [bio]                   Short biography of the user.
+ * @apiBody {String} cnicNumber            CNIC number of the user.
+ * @apiBody {String} phoneNumber            Phone number of the user.
+ * @apiBody {Object[]} [skills]              JSON array of user skills.
+ */
+usersRouter.post(
+  "/profile",
+  verifyAccessToken,
+  async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId!;
+
+      const data = createProfileSchema.parse(req.body);
+
+      const existingUser = await prisma.user.findFirst({
+        where: {
+          OR: [{ username: data.username }, { phoneNumber: data.phoneNumber }],
+          NOT: { id: userId },
+        },
+      });
+
+      if (existingUser) {
+        if (existingUser.username === data.username) {
+          return res.status(400).json({ error: "Username is already taken" });
+        }
+        if (existingUser.phoneNumber === data.phoneNumber) {
+          return res
+            .status(400)
+            .json({ error: "Phone number is already taken" });
+        }
+      }
+
+      const updatedUser = await prisma.user.update({
+        where: { id: userId },
+        data,
+      });
+
+      return res.status(200).json({
+        message: "Profile created successfully",
+        user: updatedUser,
+      });
+    } catch (error: any) {
+      console.error("Update profile error:", error);
+
+      if (error.name === "ZodError") {
+        return res.status(400).json({ error: error.errors });
+      }
+
+      if (error.code === "P2002") {
+        return res
+          .status(400)
+          .json({ error: "Username or phone number already taken" });
+      }
+
+      return res.status(500).json({ error: "Internal server error" });
+    }
+  }
+);
 
 /**
  * @api {patch} /users/profile Update User Profile
@@ -103,9 +175,7 @@ usersRouter.patch(
       console.error("Update profile error:", error);
 
       if (error.code === "P2002") {
-        return res
-          .status(400)
-          .json({ error: "Email, phone, or username already taken" });
+        return res.status(400).json({ error: "Username already taken" });
       }
 
       return res.status(500).json({ error: "Internal server error" });
@@ -166,3 +236,112 @@ usersRouter.post(
     }
   }
 );
+
+/**
+ * @api {post} /users/reset-password-request Request Password Reset
+ * @apiName RequestPasswordReset
+ * @apiGroup Users
+ *
+ * @apiBody {String} identifier Email, username, or phone number of the user.
+ *
+ * @apiSuccess {String} message Generic success message (always returned).
+ */
+usersRouter.post("/reset-password-request", async (req, res) => {
+  try {
+    const { identifier } = req.body || {};
+    if (!identifier) {
+      return res.status(400).json({ error: "Identifier is required" });
+    }
+
+    const user = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { email: identifier },
+          { username: identifier },
+          { phoneNumber: identifier },
+        ],
+      },
+    });
+
+    if (!user) {
+      return res.status(200).json({
+        message: "If an account exists, reset instructions have been sent.",
+      });
+    }
+
+    const rawToken = crypto.randomBytes(32).toString("hex");
+    const hashedToken = await bcrypt.hash(rawToken, 10);
+
+    await prisma.passwordResetToken.deleteMany({ where: { userId: user.id } });
+
+    await prisma.passwordResetToken.create({
+      data: {
+        userId: user.id,
+        tokenHash: hashedToken,
+        expiresAt: new Date(Date.now() + 1000 * 60 * 15),
+      },
+    });
+
+    // TODO: Send via email or SMS
+
+    return res.status(200).json({
+      message: "If an account exists, reset instructions have been sent.",
+    });
+  } catch (error) {
+    console.error("Reset password request error:", error);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+/**
+ * @api {post} /users/reset-password Reset Password
+ * @apiName ResetPassword
+ * @apiGroup Users
+ *
+ * @apiBody {String} userId        ID of the user (from reset link).
+ * @apiBody {String} token         Raw reset token from link.
+ * @apiBody {String} newPassword   New password to set.
+ *
+ * @apiSuccess {String} message Success message.
+ */
+usersRouter.post("/reset-password", async (req, res) => {
+  try {
+    const { userId, token, newPassword } = req.body || {};
+
+    if (!userId || !token || !newPassword) {
+      return res
+        .status(400)
+        .json({ error: "userId, token, and newPassword are required" });
+    }
+
+    const resetToken = await prisma.passwordResetToken.findFirst({
+      where: { userId },
+    });
+
+    if (
+      !resetToken ||
+      resetToken.expiresAt < new Date() ||
+      !(await bcrypt.compare(token, resetToken.tokenHash))
+    ) {
+      return res.status(400).json({ error: "Invalid or expired token" });
+    }
+
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    await prisma.user.update({
+      where: { id: userId },
+      data: { passwordHash: hashedPassword },
+    });
+
+    await prisma.passwordResetToken.deleteMany({
+      where: { userId },
+    });
+
+    return res
+      .status(200)
+      .json({ message: "Password has been reset successfully" });
+  } catch (error) {
+    console.error("Reset password error:", error);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});

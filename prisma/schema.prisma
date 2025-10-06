@@ -1,4 +1,3 @@
-
 generator client {
   provider = "prisma-client-js"
   output   = "../generated/prisma"
@@ -10,114 +9,124 @@ datasource db {
 }
 
 model User {
-  id                   String    @id @default(uuid())
-  fullName             String    @map("full_name") @db.VarChar(150)
-  username             String?    @unique @db.VarChar(50)
-  email                String   @unique @db.VarChar(100)
-  phoneNumber          String?    @unique @map("phone_number") @db.VarChar(20)
-  passwordHash         String    @map("password_hash")
-  gender               Gender?  @default(male)
-  dateOfBirth          DateTime? @map("date_of_birth")
-  profilePictureUrl    String?   @map("profile_picture_url")
-  bio                  String?
-  verificationStatus   VerificationStatus @default(unverified) @map("verification_status")
-  cnicNumber           String?   @map("cnic_number") @db.VarChar(20)
-  cnicImageUrl         String?   @map("cnic_image_url")
-  selfieUrl            String?   @map("selfie_url")
-  skills               Json?
-  role                 UserRole  @default(user)
-  isActive             Boolean   @default(true) @map("is_active")
-  createdAt            DateTime  @default(now()) @map("created_at")
-  updatedAt            DateTime  @updatedAt @map("updated_at") @default(now())
-  completedOnboarding Boolean @default(false) @map("completed_onboarding")
+  id                  String             @id @default(uuid())
+  fullName            String             @map("full_name") @db.VarChar(150)
+  username            String?            @unique @db.VarChar(50)
+  email               String             @unique @db.VarChar(100)
+  phoneNumber         String?            @unique @map("phone_number") @db.VarChar(20)
+  passwordHash        String             @map("password_hash")
+  gender              Gender?            @default(male)
+  dateOfBirth         DateTime?          @map("date_of_birth")
+  profilePictureUrl   String?            @map("profile_picture_url")
+  bio                 String?
+  verificationStatus  VerificationStatus @default(unverified) @map("verification_status")
+  cnicNumber          String?            @map("cnic_number") @db.VarChar(20)
+  cnicImageUrl        String?            @map("cnic_image_url")
+  selfieUrl           String?            @map("selfie_url")
+  skills              Json?
+  role                UserRole           @default(user)
+  isActive            Boolean            @default(true) @map("is_active")
+  createdAt           DateTime           @default(now()) @map("created_at")
+  updatedAt           DateTime           @default(now()) @updatedAt @map("updated_at")
+  completedOnboarding Boolean            @default(false) @map("completed_onboarding")
 
   // Relations (arrays for convenience)
-  requests             Request[]
-  requestParticipations     RequestParticipator[]
+  requests              Request[]
+  requestParticipations RequestParticipator[]
   // offers               Offer[]
-  alerts               Alert[]
+  alerts                Alert[]
   alertAcknowledgements AlertAcknowledgement[]
+  passwordResetTokens PasswordResetToken[]
 }
 
 model Request {
-  id                    String          @id @default(uuid())
-  userId                String          @map("user_id")
-  user                  User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  title                 String
-  description           String?
-  category              RequestCategory @default(general)
-  urgencyLevel          UrgencyLevel    @default(normal) @map("urgency_level")
-  status                RequestStatus   @default(pending)
-  locationLat           Float           @map("location_lat")
-  locationLng           Float           @map("location_lng")
-  postAnonymously       Boolean         @default(false) @map("post_anonymously")
-  visibilityVerifiedOnly Boolean        @default(false) @map("visibility_verified_only")
-  priorityScore         Float?          @default(0) @map("priority_score")
-  visibilityWomenOnly   Boolean         @default(false) @map("visibility_women_only")
-  moderationStatus      ModerationStatus @default(clean) @map("moderation_status")
-  maxHelpers            Int?            @map("max_helpers") @default(1)
-  completedAt           DateTime?       @map("completed_at")
-  expiresAt             DateTime?       @map("expires_at")
-  attachments           Json?     
-  createdAt             DateTime        @default(now()) @map("created_at")
-  updatedAt             DateTime        @updatedAt @map("updated_at") @default(now())
+  id                     String           @id @default(uuid())
+  userId                 String           @map("user_id")
+  user                   User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title                  String
+  description            String?
+  category               RequestCategory  @default(general)
+  urgencyLevel           UrgencyLevel     @default(normal) @map("urgency_level")
+  status                 RequestStatus    @default(pending)
+  locationLat            Float            @map("location_lat")
+  locationLng            Float            @map("location_lng")
+  postAnonymously        Boolean          @default(false) @map("post_anonymously")
+  visibilityVerifiedOnly Boolean          @default(false) @map("visibility_verified_only")
+  priorityScore          Float?           @default(0) @map("priority_score")
+  visibilityWomenOnly    Boolean          @default(false) @map("visibility_women_only")
+  moderationStatus       ModerationStatus @default(clean) @map("moderation_status")
+  maxHelpers             Int?             @default(1) @map("max_helpers")
+  completedAt            DateTime?        @map("completed_at")
+  expiresAt              DateTime?        @map("expires_at")
+  attachments            Json?
+  createdAt              DateTime         @default(now()) @map("created_at")
+  updatedAt              DateTime         @default(now()) @updatedAt @map("updated_at")
 
   // Relations
-  participators              RequestParticipator[]
+  participators RequestParticipator[]
   // ratings              Rating[]
 }
 
 model RequestParticipator {
-  id        String   @id @default(uuid())
-  requestId String   @map("request_id")
-  userId    String   @map("user_id")
+  id        String @id @default(uuid())
+  requestId String @map("request_id")
+  userId    String @map("user_id")
 
   status    ParticipationStatus @default(pending)
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at") @default(now())
+  createdAt DateTime            @default(now()) @map("created_at")
+  updatedAt DateTime            @default(now()) @updatedAt @map("updated_at")
 
   // Relations
-  request   Request  @relation(fields: [requestId], references: [id], onDelete: Cascade)
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  request Request @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([requestId, userId], name: "unique_request_user")
 }
 
 model Alert {
-  id              String   @id @default(uuid())
-  userId          String  @map("user_id")
-  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id     String @id @default(uuid())
+  userId String @map("user_id")
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  title           String   @db.VarChar(255)
-  description     String?   @db.Text
-  category        AlertCategory @default(general)
-  urgencyLevel    UrgencyLevel @map("urgency_level") @default(normal)
-  locationLat     Decimal  @db.Decimal(10, 7) @map("location_lat")
-  locationLng     Decimal  @db.Decimal(10, 7) @map("location_lng")
-  attachments     Json?
-  status          AlertStatus @default(active)
+  title            String           @db.VarChar(255)
+  description      String?          @db.Text
+  category         AlertCategory    @default(general)
+  urgencyLevel     UrgencyLevel     @default(normal) @map("urgency_level")
+  locationLat      Decimal          @map("location_lat") @db.Decimal(10, 7)
+  locationLng      Decimal          @map("location_lng") @db.Decimal(10, 7)
+  attachments      Json?
+  status           AlertStatus      @default(active)
   moderationStatus ModerationStatus @default(clean) @map("moderation_status")
-  expiryTime      DateTime? @map("expiry_time")
+  expiryTime       DateTime?        @map("expiry_time")
 
   acknowledgements AlertAcknowledgement[]
 
-  createdAt       DateTime @default(now()) @map("created_at")
-  updatedAt       DateTime @updatedAt @map("updated_at") @default(now())
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
 }
 
 model AlertAcknowledgement {
-  id        String @id @default(uuid())
-  alertId   String @map("alert_id")
-  userId    String @map("user_id")
+  id       String  @id @default(uuid())
+  alertId  String  @map("alert_id")
+  userId   String  @map("user_id")
   comments String?
 
-  alert     Alert  @relation(fields: [alertId], references: [id], onDelete: Cascade)
-  user      User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  alert Alert @relation(fields: [alertId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
-  updatedAt       DateTime @updatedAt @map("updated_at") @default(now())
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
 
   @@unique([alertId, userId])
+}
+
+model PasswordResetToken {
+  id        String   @id @default(uuid())
+  userId    String
+  tokenHash String 
+  expiresAt DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 enum AlertStatus {
@@ -133,6 +142,7 @@ enum ParticipationStatus {
   rejected
   withdrawn
 }
+
 enum UrgencyLevel {
   normal
   high
