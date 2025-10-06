@@ -21,4 +21,5 @@ export const createProfileSchema = z.object({
   phoneNumber: z.string().regex(/^\+92\d{10}$/, {
     message: "Phone number must be in +92XXXXXXXXXX format",
   }),
+  address: z.string(),
 });

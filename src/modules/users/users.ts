@@ -7,6 +7,7 @@ import supabase from "./../../utils/supabase.js";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { createProfileSchema } from "./users.validation.js";
+import { uploadFileToSupabase } from "../../utils/uploadFileToSupabase.js";
 
 export const usersRouter = Router();
 
@@ -55,7 +56,10 @@ usersRouter.post(
 
       const updatedUser = await prisma.user.update({
         where: { id: userId },
-        data,
+        data: {
+          ...data,
+          completedOnboarding: true,
+        },
       });
 
       return res.status(200).json({
@@ -122,20 +126,16 @@ usersRouter.patch(
 
       let newProfileUrl = oldProfileUrl;
       if (req.file) {
-        const safeName = req.file.originalname.replace(/\s+/g, "_");
-        const filePath = `users/${userId}/${Date.now()}_${safeName}`;
+        const { data, error } = await uploadFileToSupabase(
+          "users",
+          userId,
+          req.file
+        );
 
-        const { data: uploadData, error: uploadError } = await supabase.storage
-          .from("attachments")
-          .upload(filePath, req.file.buffer, {
-            cacheControl: "3600",
-            upsert: false,
-          });
-
-        if (uploadError) {
-          console.error("Supabase upload error:", uploadError);
+        if (error) {
+          console.error("Supabase upload error:", error);
         } else {
-          newProfileUrl = uploadData.path;
+          newProfileUrl = data?.path || "";
 
           if (oldProfileUrl) {
             const { error: deleteError } = await supabase.storage
@@ -345,3 +345,80 @@ usersRouter.post("/reset-password", async (req, res) => {
     return res.status(500).json({ error: "Internal server error" });
   }
 });
+
+usersRouter.post(
+  "/kyc-verification",
+  verifyAccessToken,
+  upload.fields([
+    { name: "cnicFront", maxCount: 1 },
+    { name: "cnicBack", maxCount: 1 },
+    { name: "selfieWithCnic", maxCount: 1 },
+  ]),
+  async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId!;
+      const files = req.files as {
+        [fieldname: string]: Express.Multer.File[];
+      };
+
+      if (
+        !files?.cnicFront?.[0] ||
+        !files?.cnicBack?.[0] ||
+        !files?.selfieWithCnic?.[0]
+      ) {
+        return res.status(400).json({
+          error: "CNIC front, CNIC back, and selfie with CNIC are all required",
+        });
+      }
+
+      const existing = await prisma.verification.findFirst({
+        where: { userId, status: "pending" },
+      });
+      if (existing) {
+        return res.status(400).json({
+          error:
+            "You already have a pending verification request. Please wait for admin review.",
+        });
+      }
+
+      const { data: cnicFrontData } = await uploadFileToSupabase(
+        "kyc_verification",
+        userId,
+        files.cnicFront[0]
+      );
+
+      const { data: cnicBackData } = await uploadFileToSupabase(
+        "kyc_verification",
+        userId,
+        files.cnicBack[0]
+      );
+
+      const { data: selfieWithCnicData } = await uploadFileToSupabase(
+        "kyc_verification",
+        userId,
+        files.selfieWithCnic[0]
+      );
+      const cnicFrontUrl = cnicFrontData?.path || "";
+      const cnicBackUrl = cnicBackData?.path || "";
+      const selfieWithCnicUrl = selfieWithCnicData?.path || "";
+
+      const verification = await prisma.verification.create({
+        data: {
+          userId,
+          cnicFrontUrl,
+          cnicBackUrl,
+          selfieWithCnicUrl,
+          status: "pending",
+        },
+      });
+
+      return res.status(201).json({
+        message: "KYC submitted successfully. Awaiting admin review.",
+        verification,
+      });
+    } catch (error) {
+      console.error("KYC verification error:", error);
+      return res.status(500).json({ error: "Internal server error" });
+    }
+  }
+);

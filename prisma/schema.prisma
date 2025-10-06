@@ -14,15 +14,13 @@ model User {
   username            String?            @unique @db.VarChar(50)
   email               String             @unique @db.VarChar(100)
   phoneNumber         String?            @unique @map("phone_number") @db.VarChar(20)
+  address String? 
   passwordHash        String             @map("password_hash")
   gender              Gender?            @default(male)
   dateOfBirth         DateTime?          @map("date_of_birth")
   profilePictureUrl   String?            @map("profile_picture_url")
   bio                 String?
-  verificationStatus  VerificationStatus @default(unverified) @map("verification_status")
   cnicNumber          String?            @map("cnic_number") @db.VarChar(20)
-  cnicImageUrl        String?            @map("cnic_image_url")
-  selfieUrl           String?            @map("selfie_url")
   skills              Json?
   role                UserRole           @default(user)
   isActive            Boolean            @default(true) @map("is_active")
@@ -37,6 +35,24 @@ model User {
   alerts                Alert[]
   alertAcknowledgements AlertAcknowledgement[]
   passwordResetTokens PasswordResetToken[]
+
+  verifications Verification[]
+}
+
+model Verification {
+  id             String   @id @default(uuid())
+  userId         String @map("user_id")
+  user           User     @relation(fields: [userId], references: [id])
+
+  cnicFrontUrl    String @map("cnic_front_url")
+  cnicBackUrl     String  @map("cnic_back_url")
+  selfieWithCnicUrl String       @map("selfie_with_cnic_url")
+
+  status         VerificationStatus @default(pending)
+  adminNotes     String? @map("admin_notes")
+
+  createdAt      DateTime @default(now()) @map("created_at")
+  verifiedAt     DateTime? @map("verified_at")
 }
 
 model Request {

@@ -86,6 +86,13 @@ authRouter.post("/login", async (req: Request, res: Response) => {
           { phoneNumber: identifier },
         ],
       },
+      include: {
+        verifications: {
+          select: {
+            status: true,
+          },
+        },
+      },
     });
 
     if (!user) {
@@ -109,7 +116,6 @@ authRouter.post("/login", async (req: Request, res: Response) => {
     const { passwordHash, ...safeUser } = user;
 
     res.json({
-      success: true,
       message: "Login successful",
       accessToken,
       refreshToken,
