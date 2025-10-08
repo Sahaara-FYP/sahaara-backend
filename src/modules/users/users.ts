@@ -23,6 +23,7 @@ export const usersRouter = Router();
  * @apiBody {String="male","female"} gender Gender of the user.
  * @apiBody {String} dateOfBirth           Date of birth in ISO format (YYYY-MM-DD).
  * @apiBody {String} [bio]                   Short biography of the user.
+ * @apiBody {String} address                   Current Home address of the user.
  * @apiBody {String} cnicNumber            CNIC number of the user.
  * @apiBody {String} phoneNumber            Phone number of the user.
  * @apiBody {Object[]} [skills]              JSON array of user skills.
