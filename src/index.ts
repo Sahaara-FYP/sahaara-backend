@@ -32,7 +32,11 @@ app.use(morgan("dev"));
 
 //Test Routes
 app.get("/", (req: Request, res: Response) => {
-  res.json({ message: "Welcome to Sahaara API 🚀" });
+  res.json({ message: "Welcome to Sahaara API", success: true });
+});
+
+app.get("/api", (req: Request, res: Response) => {
+  res.json({ message: "Welcome To Sahaara API", success: true });
 });
 
 app.use("/api/auth", authRouter);
