@@ -18,8 +18,8 @@ export const createProfileSchema = z.object({
     .nullable()
     .optional()
     .transform((val) => val ?? null),
-  phoneNumber: z.string().regex(/^\+92\d{10}$/, {
-    message: "Phone number must be in +92XXXXXXXXXX format",
+  phoneNumber: z.string().regex(/^03\d{9}$/, {
+    message: "Phone number must start with 03 and be 11 digits long",
   }),
   address: z.string(),
 });
