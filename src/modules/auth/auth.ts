@@ -2,6 +2,7 @@ import { Router, type Request, type Response } from "express";
 import prisma from "../../utils/prisma.js";
 import bcrypt from "bcryptjs";
 import { generateAccessToken, generateRefreshToken } from "./auth.service.js";
+import jwt from "jsonwebtoken";
 
 export const authRouter = Router();
 
@@ -124,5 +125,46 @@ authRouter.post("/login", async (req: Request, res: Response) => {
   } catch (error) {
     console.error("Login error:", error);
     res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+authRouter.post("/refresh-token", async (req: Request, res: Response) => {
+  try {
+    const { refreshToken } = req.body;
+
+    if (!refreshToken) {
+      return res.status(400).json({ error: "Refresh token is required" });
+    }
+
+    const decoded = jwt.verify(
+      refreshToken,
+      process.env.JWT_REFRESH_SECRET ||
+        "fallbacktoverysecretkeyhehekeysecretveryovertofallback"
+    ) as { userId: string; role: string };
+
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.userId, isActive: true },
+      select: { id: true, role: true },
+    });
+
+    if (!user)
+      return res.status(404).json({ message: "User not found or deactivated" });
+
+    const newAccessToken = generateAccessToken({
+      userId: user.id,
+      role: user.role,
+    });
+    const newRefreshToken = generateRefreshToken({
+      userId: user.id,
+      role: user.role,
+    });
+
+    return res.status(200).json({
+      accessToken: newAccessToken,
+      refreshToken: newRefreshToken,
+    });
+  } catch (error: any) {
+    console.error("Refresh token error:", error);
+    return res.status(401).json({ error: "Invalid or expired refresh token" });
   }
 });
