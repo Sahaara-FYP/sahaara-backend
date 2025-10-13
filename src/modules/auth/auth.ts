@@ -43,17 +43,20 @@ authRouter.post("/register", async (req: Request, res: Response) => {
         passwordHash: hashedPassword,
         fullName: full_name,
       },
-      select: {
-        id: true,
-        email: true,
-        role: true,
-        isActive: true,
-        createdAt: true,
-        completedOnboarding: true,
-      },
     });
 
-    return res.status(201).json({ user: newUser });
+    const { passwordHash, ...safeUser } = newUser;
+
+    const accessToken = generateAccessToken({
+      userId: newUser.id,
+      role: newUser.role,
+    });
+    const refreshToken = generateRefreshToken({
+      userId: newUser.id,
+      role: newUser.role,
+    });
+
+    return res.status(201).json({ accessToken, refreshToken, user: safeUser });
   } catch (error) {
     console.error("Register error:", error);
     return res.status(500).json({ error: "Internal server error" });
