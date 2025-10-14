@@ -855,3 +855,65 @@ requestsRouter.patch(
     }
   }
 );
+
+/**
+ * @api {get} /requests/me Get User's Own Requests (Paginated)
+ * @apiName GetUserRequestsPaginated
+ * @apiGroup Requests
+ *
+ * @apiHeader {String} Authorization Bearer token (JWT Access Token).
+ *
+ * @apiQuery {String} [cursor] The ID of the last fetched request (for pagination).
+ * @apiQuery {Number} [limit=20] Number of requests to fetch per page.
+ *
+ */
+requestsRouter.get(
+  "/me",
+  verifyAccessToken,
+  async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId!;
+      const limit = parseInt(req.query.limit as string) || 20;
+      const cursor = req.query.cursor as string | undefined;
+
+      const requests = await prisma.request.findMany({
+        where: { userId },
+        include: {
+          participators: {
+            include: { user: true },
+          },
+          _count: {
+            select: { participators: true },
+          },
+        },
+        orderBy: {
+          createdAt: "desc",
+        },
+        take: limit + 1,
+        ...(cursor
+          ? {
+              skip: 1,
+              cursor: { id: cursor },
+            }
+          : {}),
+      });
+
+      let nextCursor = null;
+      if (requests.length > limit) {
+        const nextItem = requests.pop();
+        nextCursor = nextItem!.id;
+      }
+
+      return res.status(200).json({
+        message: "User's requests fetched successfully",
+        data: requests,
+        nextCursor,
+      });
+    } catch (error: any) {
+      console.error("Fetch user requests error:", error);
+      return res
+        .status(500)
+        .json({ error: error.message || "Internal server error" });
+    }
+  }
+);
