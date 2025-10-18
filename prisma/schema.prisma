@@ -81,6 +81,8 @@ model Request {
   // Relations
   participators RequestParticipator[]
   // ratings              Rating[]
+
+  @@unique([createdAt, id])
 }
 
 model RequestParticipator {
@@ -97,6 +99,7 @@ model RequestParticipator {
   user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([requestId, userId], name: "unique_request_user")
+  @@unique([createdAt, id], name: "createdAt_id")
 }
 
 model Alert {
@@ -119,6 +122,8 @@ model Alert {
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@unique([createdAt, id])
 }
 
 model AlertAcknowledgement {

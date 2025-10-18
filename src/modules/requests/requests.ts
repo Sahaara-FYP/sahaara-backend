@@ -874,35 +874,41 @@ requestsRouter.get(
     try {
       const userId = req.userId!;
       const limit = parseInt(req.query.limit as string) || 20;
-      const cursor = req.query.cursor as string | undefined;
+
+      const cursorCreatedAt = req.query.cursorCreatedAt as string | undefined;
+      const cursorId = req.query.cursorId as string | undefined;
 
       const requests = await prisma.request.findMany({
         where: { userId },
         include: {
-          participators: {
-            include: { user: true },
-          },
-          _count: {
-            select: { participators: true },
-          },
+          participators: { include: { user: true } },
+          _count: { select: { participators: true } },
         },
-        orderBy: {
-          createdAt: "desc",
-        },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
         take: limit + 1,
-        ...(cursor
+        ...(cursorCreatedAt && cursorId
           ? {
               skip: 1,
-              cursor: { id: cursor },
+              cursor: {
+                createdAt_id: {
+                  createdAt: new Date(cursorCreatedAt),
+                  id: cursorId,
+                },
+              },
             }
           : {}),
       });
 
-      let nextCursor = null;
-      if (requests.length > limit) {
-        const nextItem = requests.pop();
-        nextCursor = nextItem!.id;
+      const hasExtra = requests.length > limit;
+      if (hasExtra) {
+        const extraItem = requests.pop();
       }
+      const lastItem = requests[requests.length - 1];
+      const nextCursor = lastItem
+        ? { id: lastItem.id, createdAt: lastItem.createdAt.toISOString() }
+        : null;
+
+      console.log("🚀 ~ requests:", requests);
 
       return res.status(200).json({
         message: "User's requests fetched successfully",
@@ -911,6 +917,80 @@ requestsRouter.get(
       });
     } catch (error: any) {
       console.error("Fetch user requests error:", error);
+      return res
+        .status(500)
+        .json({ error: error.message || "Internal server error" });
+    }
+  }
+);
+
+/**
+ * @api {get} /requests/participations/me Get User's Participated Requests (Paginated)
+ * @apiName GetUserParticipationsPaginated
+ * @apiGroup Requests
+ *
+ * @apiHeader {String} Authorization Bearer token (JWT Access Token).
+ *
+ * @apiQuery {String} [cursor] The ID of the last fetched participation (for pagination).
+ * @apiQuery {Number} [limit=20] Number of requests to fetch per page.
+ */
+requestsRouter.get(
+  "/participations/me",
+  verifyAccessToken,
+  async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId!;
+      const limit = parseInt(req.query.limit as string) || 20;
+
+      const cursorCreatedAt = req.query.cursorCreatedAt as string | undefined;
+      const cursorId = req.query.cursorId as string | undefined;
+
+      const participations = await prisma.requestParticipator.findMany({
+        where: { userId },
+        include: {
+          request: {
+            include: {
+              participators: { include: { user: true } },
+              _count: { select: { participators: true } },
+              user: true,
+            },
+          },
+        },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        take: limit + 1,
+        ...(cursorCreatedAt && cursorId
+          ? {
+              skip: 1,
+              cursor: {
+                createdAt_id: {
+                  createdAt: new Date(cursorCreatedAt),
+                  id: cursorId,
+                },
+              },
+            }
+          : {}),
+      });
+
+      const hasExtra = participations.length > limit;
+      if (hasExtra) participations.pop();
+
+      const lastItem = participations[participations.length - 1];
+      const nextCursor = lastItem
+        ? { id: lastItem.id, createdAt: lastItem.createdAt.toISOString() }
+        : null;
+
+      const requests = participations.map((p) => ({
+        ...p.request,
+        participationStatus: p.status,
+      }));
+
+      return res.status(200).json({
+        message: "User's participated requests fetched successfully",
+        data: requests,
+        nextCursor,
+      });
+    } catch (error: any) {
+      console.error("Fetch user participations error:", error);
       return res
         .status(500)
         .json({ error: error.message || "Internal server error" });
