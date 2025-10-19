@@ -254,12 +254,10 @@ requestsRouter.get(
 
       if (isUser && !hasLocation && (wantNearest || radius)) {
         // require location if nearest sort or radius filter is requested by user
-        return res
-          .status(400)
-          .json({
-            error:
-              "locationLat and locationLng are required for nearest sorting / radius filtering",
-          });
+        return res.status(400).json({
+          error:
+            "locationLat and locationLng are required for nearest sorting / radius filtering",
+        });
       }
 
       if (hasLocation) {
@@ -348,11 +346,9 @@ requestsRouter.get(
         orderBy = "sub.distance ASC, sub.created_at DESC, sub.id DESC";
         // require location (handled earlier)
         if (!needDistance) {
-          return res
-            .status(400)
-            .json({
-              error: "locationLat & locationLng required for nearest sort",
-            });
+          return res.status(400).json({
+            error: "locationLat & locationLng required for nearest sort",
+          });
         }
 
         if (hasCursor && cursorDistance && cursorId) {
@@ -1228,8 +1224,17 @@ requestsRouter.get(
         include: {
           request: {
             include: {
-              participators: { include: { user: true } },
-              _count: { select: { participators: true } },
+              participators: {
+                include: { user: true },
+                where: { status: "accepted" },
+              },
+              _count: {
+                select: {
+                  participators: {
+                    where: { status: "accepted" },
+                  },
+                },
+              },
               user: true,
             },
           },
@@ -1257,10 +1262,15 @@ requestsRouter.get(
         ? { id: lastItem.id, createdAt: lastItem.createdAt.toISOString() }
         : null;
 
-      const requests = participations.map((p) => ({
-        ...p.request,
-        participationStatus: p.status,
-      }));
+      const requests = participations.map((p) => {
+        const { passwordHash, ...safeUser } = p.request.user;
+        return {
+          ...p.request,
+          user: safeUser,
+          participationStatus: p.status,
+        };
+      });
+      console.log("🚀 ~ requests:", requests);
 
       return res.status(200).json({
         message: "User's participated requests fetched successfully",
