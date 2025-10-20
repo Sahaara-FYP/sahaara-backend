@@ -671,3 +671,81 @@ alertsRouter.patch(
     }
   }
 );
+
+/**
+ * @api {get} /alerts/me Get User's Own Alerts (Paginated)
+ * @apiName GetUserAlertsPaginated
+ * @apiGroup Alerts
+ *
+ * @apiHeader {String} Authorization Bearer token (JWT Access Token).
+ *
+ * @apiQuery {String} [cursor] The ID of the last fetched request (for pagination).
+ * @apiQuery {Number} [limit=20] Number of Alerts to fetch per page.
+ *
+ */
+alertsRouter.get(
+  "/me",
+  verifyAccessToken,
+  async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId!;
+      const limit = parseInt(req.query.limit as string) || 20;
+
+      const cursorCreatedAt = req.query.cursorCreatedAt as string | undefined;
+      const cursorId = req.query.cursorId as string | undefined;
+
+      const alerts = await prisma.alert.findMany({
+        where: { userId },
+        include: {
+          acknowledgements: {
+            include: {
+              user: true,
+            },
+          },
+        },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        take: limit + 1,
+        ...(cursorCreatedAt && cursorId
+          ? {
+              skip: 1,
+              cursor: {
+                createdAt_id: {
+                  createdAt: new Date(cursorCreatedAt),
+                  id: cursorId,
+                },
+              },
+            }
+          : {}),
+      });
+
+      for (const alert of alerts) {
+        if (Array.isArray(alert.attachments) && alert.attachments.length > 0) {
+          alert.attachments = await createSignedUrls(
+            alert.attachments as string[]
+          );
+        }
+      }
+
+      const hasExtra = alerts.length > limit;
+      if (hasExtra) {
+        alerts.pop();
+      }
+
+      const lastItem = alerts[alerts.length - 1];
+      const nextCursor = lastItem
+        ? { id: lastItem.id, createdAt: lastItem.createdAt.toISOString() }
+        : null;
+
+      return res.status(200).json({
+        message: "User's alerts fetched successfully",
+        data: alerts,
+        nextCursor,
+      });
+    } catch (error: any) {
+      console.error("Fetch user alerts error:", error);
+      return res
+        .status(500)
+        .json({ error: error.message || "Internal server error" });
+    }
+  }
+);
