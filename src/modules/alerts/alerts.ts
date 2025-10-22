@@ -735,6 +735,7 @@ alertsRouter.get(
       const nextCursor = lastItem
         ? { id: lastItem.id, createdAt: lastItem.createdAt.toISOString() }
         : null;
+      console.log("🚀 ~ alerts:", alerts);
 
       return res.status(200).json({
         message: "User's alerts fetched successfully",

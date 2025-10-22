@@ -439,7 +439,7 @@ requestsRouter.get(
                    'username', u.username,
                    'email', u.email,
                    'profile_picture_url', u.profile_picture_url
-                 ) AS requester,
+                 ) AS user,
                  (
                    SELECT COUNT(*)::int
                    FROM "RequestParticipator" rp
@@ -531,6 +531,7 @@ requestsRouter.get(
         }
       }
 
+      console.log("🚀 ~ camelizedRequests:", camelizedRequests);
       return res.status(200).json({
         data: camelizedRequests,
         pagination,
