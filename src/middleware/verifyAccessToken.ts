@@ -4,6 +4,7 @@ import jwt from "jsonwebtoken";
 interface JwtPayload {
   userId: string;
   role: string;
+  gender: string;
   iat?: number;
   exp?: number;
 }
@@ -12,6 +13,7 @@ declare module "express-serve-static-core" {
   interface Request {
     userId?: string;
     role?: string;
+    gender?: string;
   }
 }
 
@@ -36,6 +38,7 @@ export const verifyAccessToken = (
 
     req.userId = decoded.userId;
     req.role = decoded.role;
+    req.gender = decoded.gender;
 
     next();
   } catch (err: any) {

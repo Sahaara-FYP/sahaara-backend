@@ -131,6 +131,7 @@ alertsRouter.get(
   verifyAccessToken,
   async (req: Request, res: Response) => {
     try {
+      // --- Query params (strings) ---
       const {
         category,
         limit = "20",
@@ -142,38 +143,64 @@ alertsRouter.get(
         locationLat,
         locationLng,
         radius,
+        // new params for cursor-based infinite scroll and sorting
+        cursorCreatedAt,
+        cursorId,
+        cursorDistance,
+        sort = "latest", // latest | oldest | nearest
       } = req.query;
 
-      const filters: string[] = [];
-      const params: any[] = [];
+      // --- helpers ---
+      const parseBool = (val: any) =>
+        val === "true" ? true : val === "false" ? false : undefined;
 
+      const parseNumber = (v: any, fallback: number) =>
+        v === undefined ? fallback : Number(v);
+
+      const isUser = req.role === "user";
+      const isAdmin = req.role === "admin";
+
+      const params: any[] = [];
+      const filters: string[] = [];
+
+      // --- role-specific base filters ---
+      if (isUser) {
+        // users should not see blocked items
+        filters.push(
+          `a.moderation_status != $${params.length + 1}::"ModerationStatus"`
+        );
+        params.push("blocked");
+
+        // user should not see their own alerts
+        filters.push(`a.user_id != $${params.length + 1}`);
+        params.push(req.userId);
+      } else {
+        // admin can optionally filter by moderationStatus passed via query
+        if (moderationStatus) {
+          filters.push(
+            `a.moderation_status = $${params.length + 1}::"ModerationStatus"`
+          );
+          params.push(moderationStatus);
+        }
+      }
+
+      // --- filters from query ---
       if (category) {
-        filters.push(`"category" = $${params.length + 1}::"AlertCategory"`);
+        filters.push(`a.category = $${params.length + 1}::"AlertCategory"`);
         params.push(category);
       }
       if (urgencyLevel) {
-        filters.push(`"urgency_level" = $${params.length + 1}::"UrgencyLevel"`);
+        filters.push(`a.urgency_level = $${params.length + 1}::"UrgencyLevel"`);
         params.push(urgencyLevel);
       }
       if (status) {
-        filters.push(`"status" = $${params.length + 1}::"AlertStatus"`);
+        filters.push(`a.status = $${params.length + 1}::"AlertStatus"`);
         params.push(status);
-      }
-      if (moderationStatus) {
-        filters.push(
-          `"moderation_status" = $${params.length + 1}::"ModerationStatus"`
-        );
-        params.push(moderationStatus);
-      }
-
-      if (req.role === "user") {
-        filters.push(`a.user_id != $${params.length + 1}`);
-        params.push(req.userId);
       }
 
       if (search) {
         filters.push(
-          `("title" ILIKE $${params.length + 1} OR "description" ILIKE $${
+          `(a.title ILIKE $${params.length + 1} OR a.description ILIKE $$${
             params.length + 2
           })`
         );
@@ -184,101 +211,267 @@ alertsRouter.get(
         ? `WHERE ${filters.join(" AND ")}`
         : "";
 
-      let distanceExpr = "0";
+      // --- distance expression (only relevant when we need distance or nearest sort) ---
+      let distanceExpr = "NULL"; // default if unused
+      let needDistance = false;
       let radiusFilter: number | null = null;
 
-      if (req.role === "user") {
-        if (!locationLat || !locationLng) {
-          return res.status(400).json({ error: "Location is required" });
-        }
+      const wantNearest = sort === "nearest";
+      const hasLocation = locationLat && locationLng;
 
+      if (isUser && !hasLocation && (wantNearest || radius)) {
+        return res.status(400).json({
+          error:
+            "locationLat and locationLng are required for nearest sorting / radius filtering",
+        });
+      }
+
+      if (hasLocation) {
         const lat = parseFloat(locationLat as string);
         const lng = parseFloat(locationLng as string);
         radiusFilter = radius ? parseFloat(radius as string) : null;
 
         distanceExpr = `(6371000 * acos(
           cos(radians($${params.length + 1}))
-          * cos(radians("location_lat"))
-          * cos(radians("location_lng") - radians($${params.length + 2}))
+          * cos(radians(a.location_lat))
+          * cos(radians(a.location_lng) - radians($${params.length + 2}))
           + sin(radians($${params.length + 1}))
-          * sin(radians("location_lat"))
+          * sin(radians(a.location_lat))
         ))`;
         params.push(lat, lng);
+        needDistance = true;
       }
 
-      const countQuery = `
-        SELECT COUNT(*)::int AS total
-        FROM (
-          SELECT a.id, ${distanceExpr} AS distance
-          FROM "Alert" a
-          ${whereClause}
-        ) AS sub
-        ${
-          req.role === "user" && radiusFilter
-            ? `WHERE sub.distance <= ${radiusFilter}`
-            : ""
-        };
-      `;
-      const countResult: any[] = await prisma.$queryRawUnsafe(
-        countQuery,
-        ...params
-      );
-      const total = countResult[0]?.total || 0;
+      // --- select extra fields for user (alreadyAcknowledged) ---
+      let selectExtra = "";
+      if (isUser) {
+        const userIdParamIndex = params.length + 1;
+        params.push(req.userId);
+        selectExtra = `,
+          CASE
+            WHEN EXISTS (
+              SELECT 1 FROM "AlertAcknowledgement" aa
+              WHERE aa.alert_id = sub.id
+                AND aa.user_id = $${userIdParamIndex}
+            ) THEN true ELSE false END AS "alreadyAcknowledged"
+        `;
+      }
 
-      const query = `
-      SELECT sub.*, 
-             json_build_object(
-               'id', u.id,
-               'full_name', u.full_name,
-               'username', u.username,
-               'email', u.email,
-               'profile_picture_url', u.profile_picture_url
-             ) AS poster,
-             (
-               SELECT COUNT(*)::int
-               FROM "AlertAcknowledgement" aa
-               WHERE aa.alert_id = sub.id
-             ) AS acknowledgements_count
-      FROM (
-        SELECT a.*, ${distanceExpr} AS distance
+      // --- Build ordering and cursor logic ---
+      const limitNum = Math.max(
+        1,
+        Math.min(100, parseInt(limit as string, 10) || 20)
+      ); // clamp
+      const offsetNum = Math.max(0, parseInt(offset as string, 10) || 0);
+
+      // Cursor params
+      const hasCursor =
+        (cursorCreatedAt && cursorId) ||
+        (cursorDistance && cursorId && wantNearest);
+
+      // We'll fetch limit + 1 rows when using cursor to determine hasNextPage
+      const fetchLimit = limitNum + 1;
+
+      // Build ORDER BY clause and cursor WHERE condition depending on sort
+      let orderBy = "sub.created_at DESC, sub.id DESC";
+      let cursorCondition = ""; // will be appended inside sub-query where clause
+      if (sort === "latest") {
+        orderBy = "sub.created_at DESC, sub.id DESC";
+        if (hasCursor && cursorCreatedAt && cursorId) {
+          // next page for DESC: rows where (created_at, id) < (cursorCreatedAt, cursorId)
+          params.push(cursorCreatedAt, cursorId);
+          cursorCondition = ` AND (a.created_at < $$${
+            params.length - 1
+          } OR (a.created_at = $${params.length - 1} AND a.id < $$${
+            params.length
+          }))`;
+        }
+      } else if (sort === "oldest") {
+        orderBy = "sub.created_at ASC, sub.id ASC";
+        if (hasCursor && cursorCreatedAt && cursorId) {
+          // next page for ASC: rows where (created_at, id) > (cursorCreatedAt, cursorId)
+          params.push(cursorCreatedAt, cursorId);
+          cursorCondition = ` AND (a.created_at > $$${
+            params.length - 1
+          } OR (a.created_at = $${params.length - 1} AND a.id > $$${
+            params.length
+          }))`;
+        }
+      } else if (sort === "nearest") {
+        orderBy = "sub.distance ASC, sub.created_at DESC, sub.id DESC";
+        if (!needDistance) {
+          return res.status(400).json({
+            error: "locationLat & locationLng required for nearest sort",
+          });
+        }
+
+        if (hasCursor && cursorDistance && cursorId) {
+          // push cursorDistance then cursorId
+          params.push(Number(cursorDistance), cursorId);
+          // cursorCondition uses distanceExpr which contains placeholders referencing earlier params
+          cursorCondition = ` AND (${distanceExpr} > $$${
+            params.length - 1
+          } OR (${distanceExpr} = $${params.length - 1} AND a.id < $$${
+            params.length
+          }))`;
+        }
+      }
+
+      // --- Build the subquery with filters + optional cursorCondition + distance expression ---
+      const subWhere = whereClause ? `${whereClause}` : "";
+      const subWhereWithCursor = cursorCondition
+        ? subWhere
+          ? subWhere.replace(/^WHERE\s*/, "WHERE (") +
+            `) AND (${cursorCondition.slice(5)})`
+          : `WHERE ${cursorCondition.slice(5)}`
+        : subWhere;
+
+      const innerSelect = `
+        SELECT a.*, ${needDistance ? distanceExpr : "NULL"} AS distance
         FROM "Alert" a
-        ${whereClause}
-      ) AS sub
-      JOIN "User" u ON sub.user_id = u.id
-      ${
-        req.role === "user" && radiusFilter
-          ? `WHERE sub.distance <= ${radiusFilter}`
-          : ""
+        ${subWhereWithCursor}
+      `;
+
+      // --- For admin we want offset pagination and total count. For users infinite scroll, we return cursors. ---
+      let finalQuery = "";
+      let finalParams = [...params];
+
+      if (isAdmin) {
+        // Admin: do offset pagination and include total count
+        const countQuery = `
+          SELECT COUNT(*)::int AS total
+          FROM (
+            ${innerSelect}
+          ) sub_count;
+        `;
+        const countResult: any[] = await prisma.$queryRawUnsafe(
+          countQuery,
+          ...finalParams
+        );
+        const total = countResult[0]?.total || 0;
+
+        finalQuery = `
+          SELECT sub.*, 
+                 json_build_object(
+                   'id', u.id,
+                   'full_name', u.full_name,
+                   'username', u.username,
+                   'email', u.email,
+                   'profile_picture_url', u.profile_picture_url
+                 ) AS poster,
+                 (
+                   SELECT COUNT(*)::int
+                   FROM "AlertAcknowledgement" aa
+                   WHERE aa.alert_id = sub.id
+                 ) AS acknowledgements_count
+                 ${selectExtra}
+          FROM (
+            ${innerSelect}
+          ) AS sub
+          JOIN "User" u ON sub.user_id = u.id
+          ORDER BY ${orderBy}
+          OFFSET $${finalParams.length + 1}
+          LIMIT $${finalParams.length + 2};
+        `;
+        finalParams.push(offsetNum, limitNum);
+      } else {
+        // User / infinite scroll
+        finalQuery = `
+          SELECT sub.*, 
+                 json_build_object(
+                   'id', u.id,
+                   'full_name', u.full_name,
+                   'username', u.username,
+                   'email', u.email,
+                   'profile_picture_url', u.profile_picture_url
+                 ) AS poster,
+                 (
+                   SELECT COUNT(*)::int
+                   FROM "AlertAcknowledgement" aa
+                   WHERE aa.alert_id = sub.id
+                 ) AS acknowledgements_count
+                 ${selectExtra}
+          FROM (
+            ${innerSelect}
+          ) AS sub
+          JOIN "User" u ON sub.user_id = u.id
+          ${radiusFilter ? `WHERE sub.distance <= ${radiusFilter}` : ""}
+          ORDER BY ${orderBy}
+          LIMIT $${finalParams.length + 1};
+        `;
+        finalParams.push(fetchLimit);
       }
-      ORDER BY sub.created_at DESC
-      OFFSET ${parseInt(offset as string)}
-      LIMIT ${parseInt(limit as string)};
-    `;
 
-      const alerts: any[] = await prisma.$queryRawUnsafe(query, ...params);
+      // --- Execute query ---
+      const rows: any[] = await prisma.$queryRawUnsafe(
+        finalQuery,
+        ...finalParams
+      );
+      const camelizedAlerts = keysToCamel<any[]>(rows || []);
 
-      const camelizedAlerts = keysToCamel<any[]>(alerts);
+      // --- If using cursor-based (user), determine hasNextPage and trim results ---
+      let pagination: any = {};
+      if (isAdmin) {
+        const page = Math.floor(offsetNum / limitNum) + 1;
+        const countResult: any[] = await prisma.$queryRawUnsafe(
+          `SELECT COUNT(*)::int AS total FROM (${innerSelect}) sub_count;`,
+          ...params
+        );
 
+        const totalCount = countResult[0]?.total || 0;
+
+        const totalPages = Math.ceil(totalCount / limitNum);
+        pagination = {
+          total: totalCount,
+          page,
+          limit: limitNum,
+          totalPages,
+          hasNextPage: page < totalPages,
+          hasPrevPage: page > 1,
+        };
+      } else {
+        const hasNextPage = camelizedAlerts.length > limitNum;
+        const items = hasNextPage
+          ? camelizedAlerts.slice(0, limitNum)
+          : camelizedAlerts;
+
+        // compute next cursor (based on chosen sort)
+        let nextCursor: any = null;
+        if (items.length > 0) {
+          const last = items[items.length - 1];
+          if (sort === "nearest") {
+            nextCursor = {
+              cursorDistance: last.distance,
+              cursorId: last.id,
+            };
+          } else {
+            nextCursor = {
+              cursorCreatedAt: last.createdAt,
+              cursorId: last.id,
+            };
+          }
+        }
+
+        pagination = {
+          hasNextPage,
+          nextCursor,
+          limit: limitNum,
+        };
+
+        // replace camelizedAlerts with trimmed items
+        camelizedAlerts.splice(0, camelizedAlerts.length, ...items);
+      }
+
+      // --- Attach signed URLs for attachments if present (async loop) ---
       for (const alert of camelizedAlerts) {
         if (Array.isArray(alert.attachments) && alert.attachments.length > 0) {
           alert.attachments = await createSignedUrls(alert.attachments);
         }
       }
 
-      const page =
-        Math.floor(parseInt(offset as string) / parseInt(limit as string)) + 1;
-      const totalPages = Math.ceil(total / parseInt(limit as string));
-
       return res.status(200).json({
         data: camelizedAlerts,
-        pagination: {
-          total,
-          page,
-          limit: parseInt(limit as string),
-          totalPages,
-          hasNextPage: page < totalPages,
-          hasPrevPage: page > 1,
-        },
+        pagination,
         message: "Alerts fetched successfully!",
       });
     } catch (error) {

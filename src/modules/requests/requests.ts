@@ -191,6 +191,12 @@ requestsRouter.get(
         );
         params.push("blocked");
 
+        if (req.gender === "male") {
+          filters.push(`r.visibility_women_only = false`);
+        }
+
+        filters.push(`r.status IN ('pending', 'partially_accepted')`);
+
         // user should not see their own requests
         filters.push(`r.user_id != $${params.length + 1}`);
         params.push(req.userId);
