@@ -50,10 +50,12 @@ authRouter.post("/register", async (req: Request, res: Response) => {
     const accessToken = generateAccessToken({
       userId: newUser.id,
       role: newUser.role,
+      gender: newUser.gender,
     });
     const refreshToken = generateRefreshToken({
       userId: newUser.id,
       role: newUser.role,
+      gender: newUser.gender,
     });
 
     return res.status(201).json({ accessToken, refreshToken, user: safeUser });
@@ -111,10 +113,12 @@ authRouter.post("/login", async (req: Request, res: Response) => {
     const accessToken = generateAccessToken({
       userId: user.id,
       role: user.role,
+      gender: user.gender,
     });
     const refreshToken = generateRefreshToken({
       userId: user.id,
       role: user.role,
+      gender: user.gender,
     });
 
     const { passwordHash, ...safeUser } = user;
@@ -147,7 +151,7 @@ authRouter.post("/refresh-token", async (req: Request, res: Response) => {
 
     const user = await prisma.user.findUnique({
       where: { id: decoded.userId, isActive: true },
-      select: { id: true, role: true },
+      select: { id: true, role: true, gender: true },
     });
 
     if (!user)
@@ -156,10 +160,12 @@ authRouter.post("/refresh-token", async (req: Request, res: Response) => {
     const newAccessToken = generateAccessToken({
       userId: user.id,
       role: user.role,
+      gender: user.gender,
     });
     const newRefreshToken = generateRefreshToken({
       userId: user.id,
       role: user.role,
+      gender: user.gender,
     });
 
     return res.status(200).json({

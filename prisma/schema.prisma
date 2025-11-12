@@ -27,6 +27,7 @@ model User {
   createdAt           DateTime           @default(now()) @map("created_at")
   updatedAt           DateTime           @default(now()) @updatedAt @map("updated_at")
   completedOnboarding Boolean            @default(false) @map("completed_onboarding")
+  isVerified Boolean @default(false) @map("is_verified")
 
   // Relations (arrays for convenience)
   requests              Request[]
