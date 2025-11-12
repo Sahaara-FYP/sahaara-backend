@@ -147,6 +147,7 @@ requestsRouter.get(
   verifyAccessToken,
   async (req: Request, res: Response) => {
     try {
+      // --- Query params (strings) ---
       const {
         category,
         limit = "20",
@@ -161,53 +162,76 @@ requestsRouter.get(
         locationLat,
         locationLng,
         radius,
+        // new params for cursor-based infinite scroll and sorting
+        cursorCreatedAt,
+        cursorId,
+        cursorDistance,
+        sort = "latest", // latest | oldest | nearest
       } = req.query;
 
+      // --- helpers ---
       const parseBool = (val: any) =>
         val === "true" ? true : val === "false" ? false : undefined;
 
-      const filters: string[] = [];
-      const params: any[] = [];
+      const parseNumber = (v: any, fallback: number) =>
+        v === undefined ? fallback : Number(v);
 
+      const isUser = req.role === "user";
+      const isAdmin = req.role === "admin";
+
+      const params: any[] = [];
+      const filters: string[] = [];
+
+      // --- role-specific base filters ---
+      if (isUser) {
+        // users should not see blocked items (unless you want otherwise)
+        filters.push(
+          `r.moderation_status != $${params.length + 1}::"ModerationStatus"`
+        );
+        params.push("blocked");
+
+        // user should not see their own requests
+        filters.push(`r.user_id != $${params.length + 1}`);
+        params.push(req.userId);
+      } else {
+        // admin can optionally filter by moderationStatus passed via query
+        if (moderationStatus) {
+          filters.push(
+            `r.moderation_status = $${params.length + 1}::"ModerationStatus"`
+          );
+          params.push(moderationStatus);
+        }
+      }
+
+      // --- filters from query ---
       if (category) {
-        filters.push(`"category" = $${params.length + 1}::"RequestCategory"`);
+        filters.push(`r.category = $${params.length + 1}::"RequestCategory"`);
         params.push(category);
       }
       if (urgencyLevel) {
-        filters.push(`"urgency_level" = $${params.length + 1}::"UrgencyLevel"`);
+        filters.push(`r.urgency_level = $${params.length + 1}::"UrgencyLevel"`);
         params.push(urgencyLevel);
       }
       if (status) {
-        filters.push(`"status" = $${params.length + 1}::"RequestStatus"`);
+        filters.push(`r.status = $${params.length + 1}::"RequestStatus"`);
         params.push(status);
       }
       if (postAnonymously) {
-        filters.push(`"post_anonymously" = $${params.length + 1}`);
+        filters.push(`r.post_anonymously = $${params.length + 1}`);
         params.push(parseBool(postAnonymously));
       }
       if (visibilityVerifiedOnly) {
-        filters.push(`"visibility_verified_only" = $${params.length + 1}`);
+        filters.push(`r.visibility_verified_only = $${params.length + 1}`);
         params.push(parseBool(visibilityVerifiedOnly));
       }
       if (visibilityWomenOnly) {
-        filters.push(`"visibility_women_only" = $${params.length + 1}`);
+        filters.push(`r.visibility_women_only = $${params.length + 1}`);
         params.push(parseBool(visibilityWomenOnly));
-      }
-      if (moderationStatus) {
-        filters.push(
-          `"moderation_status" = $${params.length + 1}::"ModerationStatus"`
-        );
-        params.push(moderationStatus);
-      }
-
-      if (req.role === "user") {
-        filters.push(`r.user_id != $${params.length + 1}`);
-        params.push(req.userId);
       }
 
       if (search) {
         filters.push(
-          `("title" ILIKE $${params.length + 1} OR "description" ILIKE $${
+          `(r.title ILIKE $${params.length + 1} OR r.description ILIKE $${
             params.length + 2
           })`
         );
@@ -218,97 +242,289 @@ requestsRouter.get(
         ? `WHERE ${filters.join(" AND ")}`
         : "";
 
-      let distanceExpr = "0";
+      // --- distance expression (only relevant when we need distance or nearest sort) ---
+      let distanceExpr = "NULL"; // default if unused
+      let needDistance = false;
       let radiusFilter: number | null = null;
 
-      if (req.role === "user") {
-        if (!locationLat || !locationLng) {
-          return res.status(400).json({ error: "Location is required" });
-        }
+      // If user and location is required for nearest or radius filtering, validate location
+      const wantNearest = sort === "nearest";
+      const hasLocation = locationLat && locationLng;
 
+      if (isUser && !hasLocation && (wantNearest || radius)) {
+        // require location if nearest sort or radius filter is requested by user
+        return res
+          .status(400)
+          .json({
+            error:
+              "locationLat and locationLng are required for nearest sorting / radius filtering",
+          });
+      }
+
+      if (hasLocation) {
         const lat = parseFloat(locationLat as string);
         const lng = parseFloat(locationLng as string);
         radiusFilter = radius ? parseFloat(radius as string) : null;
 
+        // We'll push lat,lng into params only once (used by distance expression placeholders)
+        // Use current params length to generate placeholders in SQL string correctly.
+        // We push lat then lng (in that order).
+        // distance in meters (Haversine)
         distanceExpr = `(6371000 * acos(
           cos(radians($${params.length + 1}))
-          * cos(radians("location_lat"))
-          * cos(radians("location_lng") - radians($${params.length + 2}))
+          * cos(radians(r.location_lat))
+          * cos(radians(r.location_lng) - radians($${params.length + 2}))
           + sin(radians($${params.length + 1}))
-          * sin(radians("location_lat"))
+          * sin(radians(r.location_lat))
         ))`;
         params.push(lat, lng);
+        needDistance = true;
       }
 
+      // --- select extra fields for user (alreadyOffered) ---
       let selectExtra = "";
-      if (req.role === "user") {
-        selectExtra = `, 
-          CASE 
+      if (isUser) {
+        // Use parameter binding for req.userId to avoid string interpolation
+        // We'll push userId temporary here and re-use its index in the SELECT via literal (safer to push separately)
+        // But simpler: we'll include the userId value directly as text in the subquery params (it was in original code)
+        // Safer approach: pass as param - but $ placeholders inside SELECT subquery require referencing outer params
+        // We'll add a param now and then reference its index in the SELECT string.
+        const userIdParamIndex = params.length + 1;
+        params.push(req.userId);
+        selectExtra = `,
+          CASE
             WHEN EXISTS (
-              SELECT 1 
-              FROM "RequestParticipator" rp 
-              WHERE rp.request_id = sub.id 
-                AND rp.user_id = '${req.userId!}'
-            ) THEN true 
-            ELSE false 
-          END AS "alreadyOffered"`;
+              SELECT 1 FROM "RequestParticipator" rp
+              WHERE rp.request_id = sub.id
+                AND rp.user_id = $${userIdParamIndex}
+            ) THEN true ELSE false END AS "alreadyOffered"
+        `;
       }
 
-      const countQuery = `
-        SELECT COUNT(*)::int AS total
-        FROM (
-          SELECT r.id, ${distanceExpr} AS distance
-          FROM "Request" r
-          ${whereClause}
-        ) AS sub
-        ${
-          req.role === "user" && radiusFilter
-            ? `WHERE sub.distance <= ${radiusFilter}`
-            : ""
-        };
-      `;
-      const countResult: any[] = await prisma.$queryRawUnsafe(
-        countQuery,
-        ...params
-      );
-      const total = countResult[0]?.total || 0;
+      // --- Build ordering and cursor logic ---
+      // Support sorts: latest (created_at DESC), oldest (created_at ASC), nearest (distance ASC)
+      const limitNum = Math.max(
+        1,
+        Math.min(100, parseInt(limit as string, 10) || 20)
+      ); // clamp
+      const offsetNum = Math.max(0, parseInt(offset as string, 10) || 0);
 
-      const query = `
-      SELECT sub.*, 
-             json_build_object(
-               'id', u.id,
-               'full_name', u.full_name,
-               'username', u.username,
-               'email', u.email,
-               'profile_picture_url', u.profile_picture_url
-             ) AS requester,
-             (
-               SELECT COUNT(*)::int
-               FROM "RequestParticipator" rp
-               WHERE rp.request_id = sub.id
-                 AND rp.status = 'accepted'
-             ) AS participants_count
-             ${selectExtra}
-      FROM (
-        SELECT r.*, ${distanceExpr} AS distance
+      // Cursor params
+      const hasCursor =
+        (cursorCreatedAt && cursorId) ||
+        (cursorDistance && cursorId && wantNearest);
+
+      // We'll fetch limit + 1 rows when using cursor to determine hasNextPage
+      const fetchLimit = limitNum + 1;
+
+      // Build ORDER BY clause and cursor WHERE condition depending on sort
+      let orderBy = "sub.created_at DESC, sub.id DESC";
+      let cursorCondition = ""; // will be appended inside sub-query where clause
+      if (sort === "latest") {
+        orderBy = "sub.created_at DESC, sub.id DESC";
+        if (hasCursor && cursorCreatedAt && cursorId) {
+          // next page for DESC: rows where (created_at, id) < (cursorCreatedAt, cursorId)
+          params.push(cursorCreatedAt, cursorId);
+          cursorCondition = ` AND (r.created_at < $${
+            params.length - 1
+          } OR (r.created_at = $${params.length - 1} AND r.id < $${
+            params.length
+          }))`;
+        }
+      } else if (sort === "oldest") {
+        orderBy = "sub.created_at ASC, sub.id ASC";
+        if (hasCursor && cursorCreatedAt && cursorId) {
+          // next page for ASC: rows where (created_at, id) > (cursorCreatedAt, cursorId)
+          params.push(cursorCreatedAt, cursorId);
+          cursorCondition = ` AND (r.created_at > $${
+            params.length - 1
+          } OR (r.created_at = $${params.length - 1} AND r.id > $${
+            params.length
+          }))`;
+        }
+      } else if (sort === "nearest") {
+        // For nearest, we need distance in the sub select and order by distance asc, then created_at desc for tie-breaker
+        orderBy = "sub.distance ASC, sub.created_at DESC, sub.id DESC";
+        // require location (handled earlier)
+        if (!needDistance) {
+          return res
+            .status(400)
+            .json({
+              error: "locationLat & locationLng required for nearest sort",
+            });
+        }
+
+        if (hasCursor && cursorDistance && cursorId) {
+          // cursorDistance provided indicates where we left off
+          // For ASC distance: next rows have (distance, id) > (cursorDistance, cursorId)
+          // i.e., distance > cursorDistance OR (distance = cursorDistance AND id < cursorId) depending tie break;
+          // To keep tie-breaker deterministic, we will use: (distance > cursorDistance) OR (distance = cursorDistance AND r.id < cursorId)
+          // push cursorDistance then cursorId
+          params.push(Number(cursorDistance), cursorId);
+          cursorCondition = ` AND (${distanceExpr} > $${
+            params.length - 1
+          } OR (${distanceExpr} = $${params.length - 1} AND r.id < $${
+            params.length
+          }))`;
+        }
+      }
+
+      // --- Build the subquery with filters + optional cursorCondition + distance expression ---
+      // Note: cursorCondition references r and distanceExpr placeholders which rely on params positions above
+      const subWhere = whereClause ? `${whereClause}` : "";
+      // If cursorCondition exists, append it to the subWhere with AND (ensure proper handling if subWhere is empty)
+      const subWhereWithCursor = cursorCondition
+        ? subWhere
+          ? subWhere.replace(/^WHERE\s*/, "WHERE (") +
+            `) AND (${cursorCondition.slice(5)})` // hack to keep single WHERE
+          : `WHERE ${cursorCondition.slice(5)}`
+        : subWhere;
+
+      // We'll construct the primary SELECT. Use distanceExpr (if needed) as distance.
+      const innerSelect = `
+        SELECT r.*, ${needDistance ? distanceExpr : "NULL"} AS distance
         FROM "Request" r
-        ${whereClause}
-      ) AS sub
-      JOIN "User" u ON sub.user_id = u.id
-      ${
-        req.role === "user" && radiusFilter
-          ? `WHERE sub.distance <= ${radiusFilter}`
-          : ""
+        ${subWhereWithCursor}
+      `;
+
+      // --- For admin we want offset pagination and total count. For users infinite scroll, we return cursors. ---
+      let finalQuery = "";
+      let finalParams = [...params];
+
+      if (isAdmin) {
+        // Admin: do offset pagination and include total count (useful for admin UI)
+        // count query
+        const countQuery = `
+          SELECT COUNT(*)::int AS total
+          FROM (
+            ${innerSelect}
+          ) sub_count;
+        `;
+        const countResult: any[] = await prisma.$queryRawUnsafe(
+          countQuery,
+          ...finalParams
+        );
+        const total = countResult[0]?.total || 0;
+
+        finalQuery = `
+          SELECT sub.*, 
+                 json_build_object(
+                   'id', u.id,
+                   'full_name', u.full_name,
+                   'username', u.username,
+                   'email', u.email,
+                   'profile_picture_url', u.profile_picture_url
+                 ) AS requester,
+                 (
+                   SELECT COUNT(*)::int
+                   FROM "RequestParticipator" rp
+                   WHERE rp.request_id = sub.id
+                     AND rp.status = 'accepted'
+                 ) AS participants_count
+                 ${selectExtra}
+          FROM (
+            ${innerSelect}
+          ) AS sub
+          JOIN "User" u ON sub.user_id = u.id
+          ORDER BY ${orderBy}
+          OFFSET $${finalParams.length + 1}
+          LIMIT $${finalParams.length + 2};
+        `;
+        finalParams.push(offsetNum, limitNum);
+      } else {
+        // User / infinite scroll
+        // Use cursor fetch: fetch limit + 1 for hasNextPage detection
+        finalQuery = `
+          SELECT sub.*, 
+                 json_build_object(
+                   'id', u.id,
+                   'full_name', u.full_name,
+                   'username', u.username,
+                   'email', u.email,
+                   'profile_picture_url', u.profile_picture_url
+                 ) AS requester,
+                 (
+                   SELECT COUNT(*)::int
+                   FROM "RequestParticipator" rp
+                   WHERE rp.request_id = sub.id
+                     AND rp.status = 'accepted'
+                 ) AS participants_count
+                 ${selectExtra}
+          FROM (
+            ${innerSelect}
+          ) AS sub
+          JOIN "User" u ON sub.user_id = u.id
+          ${radiusFilter ? `WHERE sub.distance <= ${radiusFilter}` : ""}
+          ORDER BY ${orderBy}
+          LIMIT $${finalParams.length + 1};
+        `;
+        finalParams.push(fetchLimit); // limit+1 for hasNextPage
       }
-      ORDER BY sub.created_at DESC
-      OFFSET ${parseInt(offset as string)}
-      LIMIT ${parseInt(limit as string)};
-    `;
 
-      const requests: any[] = await prisma.$queryRawUnsafe(query, ...params);
+      // --- Execute query ---
+      const rows: any[] = await prisma.$queryRawUnsafe(
+        finalQuery,
+        ...finalParams
+      );
+      // rows are raw SQL objects (snake_case keys). Convert to camelCase as you previously did.
+      const camelizedRequests = keysToCamel<any[]>(rows || []);
 
-      const camelizedRequests = keysToCamel<any[]>(requests);
+      // --- If using cursor-based (user), determine hasNextPage and trim results ---
+      let pagination: any = {};
+      if (isAdmin) {
+        // compute page info for admin
+        const page = Math.floor(offsetNum / limitNum) + 1;
+        const countResult: any[] = await prisma.$queryRawUnsafe(
+          `SELECT COUNT(*)::int AS total FROM (${innerSelect}) sub_count;`,
+          ...params
+        );
 
+        const totalCount = countResult[0]?.total || 0;
+
+        const totalPages = Math.ceil(totalCount / limitNum);
+        pagination = {
+          total: totalCount,
+          page,
+          limit: limitNum,
+          totalPages,
+          hasNextPage: page < totalPages,
+          hasPrevPage: page > 1,
+        };
+      } else {
+        // user
+        const hasNextPage = camelizedRequests.length > limitNum;
+        const items = hasNextPage
+          ? camelizedRequests.slice(0, limitNum)
+          : camelizedRequests;
+
+        // compute next cursor (based on chosen sort)
+        let nextCursor: any = null;
+        if (items.length > 0) {
+          const last = items[items.length - 1];
+          if (sort === "nearest") {
+            nextCursor = {
+              cursorDistance: last.distance,
+              cursorId: last.id,
+            };
+          } else {
+            nextCursor = {
+              cursorCreatedAt: last.createdAt,
+              cursorId: last.id,
+            };
+          }
+        }
+
+        pagination = {
+          hasNextPage,
+          nextCursor,
+          limit: limitNum,
+        };
+
+        // replace camelizedRequests with trimmed items
+        camelizedRequests.splice(0, camelizedRequests.length, ...items);
+      }
+
+      // --- Attach signed URLs for attachments if present (async loop) ---
       for (const request of camelizedRequests) {
         if (
           Array.isArray(request.attachments) &&
@@ -318,20 +534,9 @@ requestsRouter.get(
         }
       }
 
-      const page =
-        Math.floor(parseInt(offset as string) / parseInt(limit as string)) + 1;
-      const totalPages = Math.ceil(total / parseInt(limit as string));
-
       return res.status(200).json({
         data: camelizedRequests,
-        pagination: {
-          total,
-          page,
-          limit: parseInt(limit as string),
-          totalPages,
-          hasNextPage: page < totalPages,
-          hasPrevPage: page > 1,
-        },
+        pagination,
         message: "Requests fetched successfully!",
       });
     } catch (error) {
