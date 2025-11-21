@@ -11,6 +11,7 @@ import { requestsRouter } from "./modules/requests/requests.js";
 import { alertsRouter } from "./modules/alerts/alerts.js";
 import cors from "cors";
 import { usersRouter } from "./modules/users/users.js";
+import { analyticsRouter } from "./modules/analytics/analytics.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -43,6 +44,7 @@ app.use("/api/auth", authRouter);
 app.use("/api/requests", requestsRouter);
 app.use("/api/alerts", alertsRouter);
 app.use("/api/users", usersRouter);
+app.use("/api/analytics", analyticsRouter);
 
 app.use("/api/docs", express.static(path.join(__dirname, "../apidoc")));
 
