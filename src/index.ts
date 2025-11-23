@@ -12,6 +12,7 @@ import { alertsRouter } from "./modules/alerts/alerts.js";
 import cors from "cors";
 import { usersRouter } from "./modules/users/users.js";
 import { analyticsRouter } from "./modules/analytics/analytics.js";
+import prisma from "./utils/prisma.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -48,6 +49,32 @@ app.use("/api/analytics", analyticsRouter);
 
 app.use("/api/docs", express.static(path.join(__dirname, "../apidoc")));
 
-app.listen(PORT, () => {
-  console.log(`Server running at http://localhost:${PORT}`);
-});
+async function waitForPrisma(retries = 5, delayMs = 2000) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      await prisma.$queryRaw`SELECT 1`;
+      return true;
+    } catch {
+      console.log(`Prisma connection failed. Retrying in ${delayMs}ms...`);
+      await new Promise((r) => setTimeout(r, delayMs));
+    }
+  }
+  throw new Error("Failed to connect to database after multiple retries.");
+}
+
+async function startServer() {
+  try {
+    // Test Supabase connection
+    await prisma.$queryRaw`SELECT 1`;
+    console.log("Supabase connection successful. Starting server...");
+
+    app.listen(PORT, () => {
+      console.log(`Server running at http://localhost:${PORT}`);
+    });
+  } catch (err) {
+    console.error("Failed to connect to Supabase:", err);
+    process.exit(1); // Stop the process if connection fails
+  }
+}
+
+startServer();

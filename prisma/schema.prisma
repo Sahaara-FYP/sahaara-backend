@@ -144,9 +144,9 @@ model AlertAcknowledgement {
 
 model PasswordResetToken {
   id        String   @id @default(uuid())
-  userId    String
-  tokenHash String 
-  expiresAt DateTime
+  userId    String @map("user_id")
+  tokenHash String @map("token_hash")
+  expiresAt DateTime @map("expires_at")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
@@ -208,7 +208,6 @@ enum Gender {
 }
 
 enum VerificationStatus {
-  unverified
   pending
   verified
   rejected
