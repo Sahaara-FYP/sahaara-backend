@@ -297,13 +297,21 @@ requestsRouter.get(
         const userIdParamIndex = params.length + 1;
         params.push(req.userId);
         selectExtra = `,
-          CASE
-            WHEN EXISTS (
-              SELECT 1 FROM "RequestParticipator" rp
-              WHERE rp.request_id = sub.id
-                AND rp.user_id = $${userIdParamIndex}
-            ) THEN true ELSE false END AS "alreadyOffered"
-        `;
+  CASE
+    WHEN EXISTS (
+      SELECT 1 FROM "RequestParticipator" rp
+      WHERE rp.request_id = sub.id
+        AND rp.user_id = $${userIdParamIndex}
+    ) THEN true ELSE false END AS "alreadyOffered",
+
+  (
+    SELECT rp.status
+    FROM "RequestParticipator" rp
+    WHERE rp.request_id = sub.id
+      AND rp.user_id = $${userIdParamIndex}
+    LIMIT 1
+  ) AS "offerStatus"
+`;
       }
 
       // --- Build ordering and cursor logic ---
@@ -690,6 +698,11 @@ requestsRouter.post(
 
       const request = await prisma.request.findUnique({
         where: { id: requestId },
+        include: {
+          participators: {
+            where: { status: "accepted" },
+          },
+        },
       });
       if (!request) {
         return res.status(404).json({ error: "Request not found" });
@@ -698,6 +711,13 @@ requestsRouter.post(
         return res
           .status(400)
           .json({ error: "You cannot participate on your own request" });
+      }
+
+      const acceptedCount = request.participators.length;
+      if (acceptedCount >= (request.maxHelpers || 1)) {
+        return res
+          .status(400)
+          .json({ error: "Request already has the maximum number of helpers" });
       }
 
       const participator = await prisma.requestParticipator.create({
@@ -1274,7 +1294,7 @@ requestsRouter.get(
         return {
           ...p.request,
           user: safeUser,
-          participationStatus: p.status,
+          offerStatus: p.status,
         };
       });
       console.log("🚀 ~ requests:", requests);
