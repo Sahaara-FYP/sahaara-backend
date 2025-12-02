@@ -174,6 +174,9 @@ alertsRouter.get(
         // user should not see their own alerts
         filters.push(`a.user_id != $${params.length + 1}`);
         params.push(req.userId);
+
+        filters.push(`a.status = $${params.length + 1}::"AlertStatus"`);
+        params.push("active");
       } else {
         // admin can optionally filter by moderationStatus passed via query
         if (moderationStatus) {
@@ -645,6 +648,53 @@ alertsRouter.patch(
   }
 );
 
+alertsRouter.patch(
+  "/resolve",
+  verifyAccessToken,
+  async (req: Request, res: Response) => {
+    try {
+      const { alertId } = req.body || {};
+      const userId = req.userId!;
+
+      if (!alertId) {
+        return res.status(400).json({ error: "Alert ID is required" });
+      }
+
+      const existingAlert = await prisma.alert.findUnique({
+        where: { id: alertId },
+      });
+      if (!existingAlert) {
+        return res.status(404).json({ error: "Alert not found" });
+      }
+
+      if (existingAlert.userId !== userId) {
+        return res
+          .status(403)
+          .json({ error: "Not authorized to resolve this alert" });
+      }
+
+      if (existingAlert.status !== "active") {
+        return res.status(400).json({
+          error: `Cannot resolve an already ${existingAlert.status} Alert`,
+        });
+      }
+
+      const resolvedAlert = await prisma.alert.update({
+        where: { id: alertId },
+        data: { status: "resolved" },
+      });
+
+      return res.status(200).json({
+        message: "Alert resolved successfully",
+        alert: resolvedAlert,
+      });
+    } catch (error) {
+      console.error("Resolve alert error:", error);
+      return res.status(500).json({ error: "Internal server error" });
+    }
+  }
+);
+
 /**
  * @api {post} /alerts/acknowledgement Acknowledge an Alert
  * @apiName AcknowledgeAlert
@@ -657,11 +707,11 @@ alertsRouter.patch(
  *
  */
 alertsRouter.post(
-  "/acknowledgement",
+  "/acknowledge",
   verifyAccessToken,
   async (req: Request, res: Response) => {
     try {
-      const { alertId, comments } = req.body || {};
+      const { alertId } = req.body || {};
       const userId = req.userId!;
 
       if (!alertId) {
@@ -685,7 +735,6 @@ alertsRouter.post(
         data: {
           alertId,
           userId,
-          comments,
         },
       });
 
