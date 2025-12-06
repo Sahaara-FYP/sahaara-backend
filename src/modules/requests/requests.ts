@@ -301,6 +301,7 @@ requestsRouter.get(
     WHEN EXISTS (
       SELECT 1 FROM "RequestParticipator" rp
       WHERE rp.request_id = sub.id
+      AND rp.status = 'pending'::"ParticipationStatus"
         AND rp.user_id = $${userIdParamIndex}
     ) THEN true ELSE false END AS "alreadyOffered",
 
@@ -720,13 +721,38 @@ requestsRouter.post(
           .json({ error: "Request already has the maximum number of helpers" });
       }
 
-      const participator = await prisma.requestParticipator.create({
-        data: {
-          requestId,
-          userId,
-          status: "pending",
-        },
-      });
+      const existingParticipation = await prisma.requestParticipator.findUnique(
+        {
+          where: {
+            unique_request_user: { requestId, userId },
+          },
+        }
+      );
+
+      let participator;
+      if (existingParticipation) {
+        if (existingParticipation?.status !== "withdrawn") {
+          return res.status(400).json({
+            error: `You cannot participate again on a/an ${existingParticipation?.status} help offer`,
+          });
+        }
+        participator = await prisma.requestParticipator.update({
+          data: {
+            status: "pending",
+          },
+          where: {
+            unique_request_user: { requestId, userId },
+          },
+        });
+      } else {
+        participator = await prisma.requestParticipator.create({
+          data: {
+            requestId,
+            userId,
+            status: "pending",
+          },
+        });
+      }
 
       return res.status(201).json({
         message: "Help Participation offered successfully",
@@ -1096,16 +1122,16 @@ requestsRouter.patch(
   verifyAccessToken,
   async (req: Request, res: Response) => {
     try {
-      const { participatorId } = req.body || {};
+      const { requestId } = req.body || {};
       const userId = req.userId!;
 
-      if (!participatorId) {
-        return res.status(400).json({ error: "participatorId is required" });
+      if (!requestId) {
+        return res.status(400).json({ error: "Request ID is required" });
       }
 
       const result = await prisma.$transaction(async (tx) => {
         const participator = await tx.requestParticipator.findUnique({
-          where: { id: participatorId },
+          where: { unique_request_user: { requestId, userId } },
           include: { request: true },
         });
 
@@ -1126,7 +1152,7 @@ requestsRouter.patch(
         }
 
         const updatedParticipator = await tx.requestParticipator.update({
-          where: { id: participatorId },
+          where: { unique_request_user: { requestId, userId } },
           data: { status: "withdrawn" },
         });
 
@@ -1295,6 +1321,7 @@ requestsRouter.get(
           ...p.request,
           user: safeUser,
           offerStatus: p.status,
+          alreadyOffered: true,
         };
       });
       console.log("🚀 ~ requests:", requests);
