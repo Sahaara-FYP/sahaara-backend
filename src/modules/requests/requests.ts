@@ -546,7 +546,6 @@ requestsRouter.get(
         }
       }
 
-      console.log("🚀 ~ camelizedRequests:", camelizedRequests);
       return res.status(200).json({
         data: camelizedRequests,
         pagination,

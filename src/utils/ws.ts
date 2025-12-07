@@ -11,17 +11,20 @@ export function initWebsocket(server: any) {
   wss = new WebSocketServer({ server });
 
   wss.on("connection", (socket: WSClient, req) => {
-    console.log("WebSocket client connected");
-
     const url = new URL(req.url!, `http://${req.headers.host}`);
     const userId = url.searchParams.get("userId");
     if (userId) socket.userId = userId;
 
     clients.add(socket);
+    console.log(
+      `WebSocket client ${userId} connected: Total clients now: ${clients.size}`
+    );
 
     socket.on("close", () => {
       clients.delete(socket);
-      console.log("WebSocket client disconnected");
+      console.log(
+        `WebSocket client ${userId} DISCONNECTED: Total clients now: ${clients.size}`
+      );
     });
   });
 }

@@ -15,7 +15,7 @@ import { analyticsRouter } from "./modules/analytics/analytics.js";
 import prisma from "./utils/prisma.js";
 import http from "http";
 import { WebSocketServer } from "ws";
-import { initWebsocket } from "./utils/ws.js";
+import { broadcast, initWebsocket } from "./utils/ws.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

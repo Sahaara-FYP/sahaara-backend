@@ -1,7 +1,6 @@
 import { z } from "zod";
 
 export const createProfileSchema = z.object({
-  fullName: z.string().min(1),
   username: z.string().min(3).max(20),
   gender: z.enum(["male", "female"]),
   dateOfBirth: z.string().transform((val) => new Date(val)),

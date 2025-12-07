@@ -39,7 +39,11 @@ usersRouter.post(
 
       const existingUser = await prisma.user.findFirst({
         where: {
-          OR: [{ username: data.username }, { phoneNumber: data.phoneNumber }],
+          OR: [
+            { username: data.username },
+            { phoneNumber: data.phoneNumber },
+            { cnicNumber: data.cnicNumber },
+          ],
           NOT: { id: userId },
         },
       });
