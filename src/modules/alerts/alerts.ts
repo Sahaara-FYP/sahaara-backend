@@ -7,6 +7,7 @@ import supabase from "./../../utils/supabase.js";
 import { createSignedUrls } from "../../utils/createSignedURL.js";
 import { keysToCamel } from "../../utils/camelize.js";
 import { verifyRole } from "../../middleware/verifyRole.js";
+import { broadcast } from "../../utils/ws.js";
 
 export const alertsRouter = Router();
 
@@ -94,6 +95,7 @@ alertsRouter.post(
 
         return alert;
       });
+      broadcast("alerts_changed");
 
       return res.status(201).json({
         message: "Alert created successfully",
@@ -147,7 +149,7 @@ alertsRouter.get(
         cursorCreatedAt,
         cursorId,
         cursorDistance,
-        sort = "latest", // latest | oldest | nearest
+        sort = "nearest", // latest | oldest | nearest
       } = req.query;
 
       // --- helpers ---
@@ -276,7 +278,8 @@ alertsRouter.get(
       const fetchLimit = limitNum + 1;
 
       // Build ORDER BY clause and cursor WHERE condition depending on sort
-      let orderBy = "sub.created_at DESC, sub.id DESC";
+      let orderBy =
+        "CAST(sub.distance AS double precision) ASC, sub.created_at DESC, sub.id DESC";
       let cursorCondition = ""; // will be appended inside sub-query where clause
       if (sort === "latest") {
         orderBy = "sub.created_at DESC, sub.id DESC";
@@ -312,11 +315,11 @@ alertsRouter.get(
           // push cursorDistance then cursorId
           params.push(Number(cursorDistance), cursorId);
           // cursorCondition uses distanceExpr which contains placeholders referencing earlier params
-          cursorCondition = ` AND (${distanceExpr} > $$${
+          cursorCondition = ` AND (CAST(${distanceExpr} AS double precision) > $${
             params.length - 1
-          } OR (${distanceExpr} = $${params.length - 1} AND a.id < $$${
-            params.length
-          }))`;
+          } OR (CAST(${distanceExpr} AS double precision) = $${
+            params.length - 1
+          } AND a.id < $${params.length}))`;
         }
       }
 
@@ -463,6 +466,7 @@ alertsRouter.get(
 
         // replace camelizedAlerts with trimmed items
         camelizedAlerts.splice(0, camelizedAlerts.length, ...items);
+        console.log("🚀 ~ camelizedAlerts:", camelizedAlerts);
       }
 
       // --- Attach signed URLs for attachments if present (async loop) ---
@@ -579,6 +583,7 @@ alertsRouter.patch(
           }),
         },
       });
+      broadcast("alerts_changed");
 
       return res.status(200).json({
         message: "Alert updated successfully",
@@ -636,6 +641,7 @@ alertsRouter.patch(
         where: { id: alertId },
         data: { status: "cancelled" },
       });
+      broadcast("alerts_changed");
 
       return res.status(200).json({
         message: "Alert cancelled successfully",
@@ -683,6 +689,7 @@ alertsRouter.patch(
         where: { id: alertId },
         data: { status: "resolved" },
       });
+      broadcast("alerts_changed");
 
       return res.status(200).json({
         message: "Alert resolved successfully",
@@ -737,6 +744,7 @@ alertsRouter.post(
           userId,
         },
       });
+      broadcast("alerts_changed");
 
       return res.status(201).json({
         message: "Alert acknowledged successfully",
@@ -902,6 +910,7 @@ alertsRouter.patch(
         where: { id: alertId },
         data: { moderationStatus },
       });
+      broadcast("alerts_changed");
 
       return res.status(200).json({
         message: "Alert moderation status updated successfully",

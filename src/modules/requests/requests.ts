@@ -7,6 +7,7 @@ import upload from "../../middleware/multer.js";
 import { createSignedUrls } from "../../utils/createSignedURL.js";
 import { verifyRole } from "../../middleware/verifyRole.js";
 import { keysToCamel } from "../../utils/camelize.js";
+import { broadcast } from "../../utils/ws.js";
 
 export const requestsRouter = Router();
 
@@ -108,6 +109,8 @@ requestsRouter.post(
         return request;
       });
 
+      broadcast("requests_changed");
+
       return res.status(201).json({
         message: "Request created successfully",
         request: newRequest,
@@ -167,7 +170,7 @@ requestsRouter.get(
         cursorCreatedAt,
         cursorId,
         cursorDistance,
-        sort = "latest", // latest | oldest | nearest
+        sort = "nearest", // latest | oldest | nearest
       } = req.query;
 
       // --- helpers ---
@@ -332,7 +335,8 @@ requestsRouter.get(
       const fetchLimit = limitNum + 1;
 
       // Build ORDER BY clause and cursor WHERE condition depending on sort
-      let orderBy = "sub.created_at DESC, sub.id DESC";
+      let orderBy =
+        "CAST(sub.distance AS double precision) ASC, sub.created_at DESC, sub.id DESC";
       let cursorCondition = ""; // will be appended inside sub-query where clause
       if (sort === "latest") {
         orderBy = "sub.created_at DESC, sub.id DESC";
@@ -373,11 +377,11 @@ requestsRouter.get(
           // To keep tie-breaker deterministic, we will use: (distance > cursorDistance) OR (distance = cursorDistance AND r.id < cursorId)
           // push cursorDistance then cursorId
           params.push(Number(cursorDistance), cursorId);
-          cursorCondition = ` AND (${distanceExpr} > $${
+          cursorCondition = ` AND (CAST(${distanceExpr} AS double precision) > $${
             params.length - 1
-          } OR (${distanceExpr} = $${params.length - 1} AND r.id < $${
-            params.length
-          }))`;
+          } OR (CAST(${distanceExpr} AS double precision) = $${
+            params.length - 1
+          } AND a.id < $${params.length}))`;
         }
       }
 
@@ -661,7 +665,7 @@ requestsRouter.patch(
           }),
         },
       });
-
+      broadcast("requests_changed");
       return res.status(200).json({
         message: "Request updated successfully",
         request: updatedRequest,
@@ -752,6 +756,7 @@ requestsRouter.post(
           },
         });
       }
+      broadcast("requests_changed");
 
       return res.status(201).json({
         message: "Help Participation offered successfully",
@@ -857,7 +862,7 @@ requestsRouter.patch(
 
         return { updatedParticipator, updatedRequest };
       });
-
+      broadcast("requests_changed");
       return res.status(200).json({
         message: `Participator accepted successfully`,
         participator: result.updatedParticipator,
@@ -930,7 +935,7 @@ requestsRouter.patch(
         where: { id: participatorId },
         data: { status: "rejected" },
       });
-
+      broadcast("requests_changed");
       return res.status(200).json({
         message: "Participator rejected successfully",
         participator: updatedParticipator,
@@ -991,7 +996,7 @@ requestsRouter.patch(
         where: { id: requestId },
         data: { status: "completed" },
       });
-
+      broadcast("requests_changed");
       return res.status(200).json({
         message: "Request marked as completed successfully",
         request: updatedRequest,
@@ -1053,7 +1058,7 @@ requestsRouter.patch(
         where: { id: requestId },
         data: { status: "cancelled" },
       });
-
+      broadcast("requests_changed");
       return res.status(200).json({
         message: "Request cancelled successfully",
         request: updatedRequest,
@@ -1095,7 +1100,7 @@ requestsRouter.patch(
         where: { id: requestId },
         data: { moderationStatus },
       });
-
+      broadcast("requests_changed");
       return res.status(200).json({
         message: "Moderation status updated successfully",
         request: updatedRequest,
@@ -1157,7 +1162,7 @@ requestsRouter.patch(
 
         return updatedParticipator;
       });
-
+      broadcast("requests_changed");
       return res.status(200).json({
         message: "Participation Offer withdrawn",
         participator: result,
