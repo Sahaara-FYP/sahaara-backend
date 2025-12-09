@@ -149,8 +149,9 @@ alertsRouter.get(
         cursorCreatedAt,
         cursorId,
         cursorDistance,
-        sort = "nearest", // latest | oldest | nearest
       } = req.query;
+
+      let { sort = "nearest" } = req.query;
 
       // --- helpers ---
       const parseBool = (val: any) =>
@@ -278,6 +279,9 @@ alertsRouter.get(
       const fetchLimit = limitNum + 1;
 
       // Build ORDER BY clause and cursor WHERE condition depending on sort
+      if (isAdmin) {
+        sort = "latest";
+      }
       let orderBy =
         "CAST(sub.distance AS double precision) ASC, sub.created_at DESC, sub.id DESC";
       let cursorCondition = ""; // will be appended inside sub-query where clause
