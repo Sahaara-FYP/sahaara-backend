@@ -206,7 +206,7 @@ alertsRouter.get(
 
       if (search) {
         filters.push(
-          `(a.title ILIKE $${params.length + 1} OR a.description ILIKE $$${
+          `(a.title ILIKE $${params.length + 1} OR a.description ILIKE $${
             params.length + 2
           })`
         );

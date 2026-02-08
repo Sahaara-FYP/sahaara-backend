@@ -119,7 +119,7 @@ requestsRouter.post(
       console.error("Create request error:", error);
       return res.status(500).json({ error: "Internal server error" });
     }
-  }
+  },
 );
 
 /**
@@ -191,7 +191,7 @@ requestsRouter.get(
       if (isUser) {
         // users should not see blocked items (unless you want otherwise)
         filters.push(
-          `r.moderation_status != $${params.length + 1}::"ModerationStatus"`
+          `r.moderation_status != $${params.length + 1}::"ModerationStatus"`,
         );
         params.push("blocked");
 
@@ -204,11 +204,23 @@ requestsRouter.get(
         // user should not see their own requests
         filters.push(`r.user_id != $${params.length + 1}`);
         params.push(req.userId);
+
+        //user should not see those to which he has been rejected
+        filters.push(`
+  NOT EXISTS (
+    SELECT 1
+    FROM "RequestParticipator" rp
+    WHERE rp.request_id = r.id
+      AND rp.user_id = $${params.length + 1}
+      AND rp.status = 'rejected'
+  )
+`);
+        params.push(req.userId);
       } else {
         // admin can optionally filter by moderationStatus passed via query
         if (moderationStatus) {
           filters.push(
-            `r.moderation_status = $${params.length + 1}::"ModerationStatus"`
+            `r.moderation_status = $${params.length + 1}::"ModerationStatus"`,
           );
           params.push(moderationStatus);
         }
@@ -244,7 +256,7 @@ requestsRouter.get(
         filters.push(
           `(r.title ILIKE $${params.length + 1} OR r.description ILIKE $${
             params.length + 2
-          })`
+          })`,
         );
         params.push(`%${search}%`, `%${search}%`);
       }
@@ -323,7 +335,7 @@ requestsRouter.get(
       // Support sorts: latest (created_at DESC), oldest (created_at ASC), nearest (distance ASC)
       const limitNum = Math.max(
         1,
-        Math.min(100, parseInt(limit as string, 10) || 20)
+        Math.min(100, parseInt(limit as string, 10) || 20),
       ); // clamp
       const offsetNum = Math.max(0, parseInt(offset as string, 10) || 0);
 
@@ -422,7 +434,7 @@ requestsRouter.get(
         `;
         const countResult: any[] = await prisma.$queryRawUnsafe(
           countQuery,
-          ...finalParams
+          ...finalParams,
         );
         const total = countResult[0]?.total || 0;
 
@@ -484,7 +496,7 @@ requestsRouter.get(
       // --- Execute query ---
       const rows: any[] = await prisma.$queryRawUnsafe(
         finalQuery,
-        ...finalParams
+        ...finalParams,
       );
       // rows are raw SQL objects (snake_case keys). Convert to camelCase as you previously did.
       const camelizedRequests = keysToCamel<any[]>(rows || []);
@@ -496,7 +508,7 @@ requestsRouter.get(
         const page = Math.floor(offsetNum / limitNum) + 1;
         const countResult: any[] = await prisma.$queryRawUnsafe(
           `SELECT COUNT(*)::int AS total FROM (${innerSelect}) sub_count;`,
-          ...params
+          ...params,
         );
 
         const totalCount = countResult[0]?.total || 0;
@@ -563,7 +575,7 @@ requestsRouter.get(
       console.error("Get requests error:", error);
       return res.status(500).json({ error: "Internal server error" });
     }
-  }
+  },
 );
 
 /**
@@ -669,7 +681,7 @@ requestsRouter.patch(
           }),
         },
       });
-      broadcast("requests_changed");
+      broadcast("requests_changed", { requestId });
       return res.status(200).json({
         message: "Request updated successfully",
         request: updatedRequest,
@@ -678,7 +690,7 @@ requestsRouter.patch(
       console.error("Update request error:", error);
       return res.status(500).json({ error: "Internal server error" });
     }
-  }
+  },
 );
 
 /**
@@ -733,7 +745,7 @@ requestsRouter.post(
           where: {
             unique_request_user: { requestId, userId },
           },
-        }
+        },
       );
 
       let participator;
@@ -760,7 +772,7 @@ requestsRouter.post(
           },
         });
       }
-      broadcast("requests_changed");
+      broadcast("requests_changed", { requestId });
 
       return res.status(201).json({
         message: "Help Participation offered successfully",
@@ -776,7 +788,7 @@ requestsRouter.post(
       console.error("Error offering help:", error);
       return res.status(500).json({ error: "Internal server error" });
     }
-  }
+  },
 );
 
 /**
@@ -866,7 +878,7 @@ requestsRouter.patch(
 
         return { updatedParticipator, updatedRequest };
       });
-      broadcast("requests_changed");
+      broadcast("requests_changed", { requestId: participator.requestId });
       return res.status(200).json({
         message: `Participator accepted successfully`,
         participator: result.updatedParticipator,
@@ -876,7 +888,7 @@ requestsRouter.patch(
       console.error(`Error accepting participator:`, error);
       return res.status(500).json({ error: "Internal server error" });
     }
-  }
+  },
 );
 
 /**
@@ -939,7 +951,7 @@ requestsRouter.patch(
         where: { id: participatorId },
         data: { status: "rejected" },
       });
-      broadcast("requests_changed");
+      broadcast("requests_changed", { requestId: participator.requestId });
       return res.status(200).json({
         message: "Participator rejected successfully",
         participator: updatedParticipator,
@@ -948,7 +960,7 @@ requestsRouter.patch(
       console.error("Error rejecting participator:", error);
       return res.status(500).json({ error: "Internal server error" });
     }
-  }
+  },
 );
 
 /**
@@ -991,7 +1003,7 @@ requestsRouter.patch(
         return res.status(400).json({
           message: `Cannot complete a ${request.status.replace(
             "_",
-            " "
+            " ",
           )} request`,
         });
       }
@@ -1000,7 +1012,7 @@ requestsRouter.patch(
         where: { id: requestId },
         data: { status: "completed" },
       });
-      broadcast("requests_changed");
+      broadcast("requests_changed", { requestId });
       return res.status(200).json({
         message: "Request marked as completed successfully",
         request: updatedRequest,
@@ -1009,7 +1021,7 @@ requestsRouter.patch(
       console.error("Complete request error:", error);
       return res.status(500).json({ message: "Internal server error" });
     }
-  }
+  },
 );
 
 /**
@@ -1062,7 +1074,7 @@ requestsRouter.patch(
         where: { id: requestId },
         data: { status: "cancelled" },
       });
-      broadcast("requests_changed");
+      broadcast("requests_changed", { requestId });
       return res.status(200).json({
         message: "Request cancelled successfully",
         request: updatedRequest,
@@ -1071,7 +1083,7 @@ requestsRouter.patch(
       console.error("Cancel request error:", error);
       return res.status(500).json({ message: "Internal server error" });
     }
-  }
+  },
 );
 
 /**
@@ -1104,7 +1116,7 @@ requestsRouter.patch(
         where: { id: requestId },
         data: { moderationStatus },
       });
-      broadcast("requests_changed");
+      broadcast("requests_changed", { requestId });
       return res.status(200).json({
         message: "Moderation status updated successfully",
         request: updatedRequest,
@@ -1113,7 +1125,7 @@ requestsRouter.patch(
       console.error("Error updating moderation status:", error);
       return res.status(500).json({ error: "Internal Server Error" });
     }
-  }
+  },
 );
 
 /**
@@ -1149,13 +1161,13 @@ requestsRouter.patch(
 
         if (participator.userId !== userId) {
           throw new Error(
-            "You are not allowed to withdraw this participation offer"
+            "You are not allowed to withdraw this participation offer",
           );
         }
 
         if (participator.status !== "pending") {
           throw new Error(
-            `Cannot withdraw an offer that has already been ${participator.status}`
+            `Cannot withdraw an offer that has already been ${participator.status}`,
           );
         }
 
@@ -1166,7 +1178,7 @@ requestsRouter.patch(
 
         return updatedParticipator;
       });
-      broadcast("requests_changed");
+      broadcast("requests_changed", { requestId });
       return res.status(200).json({
         message: "Participation Offer withdrawn",
         participator: result,
@@ -1177,7 +1189,7 @@ requestsRouter.patch(
         .status(400)
         .json({ error: error.message || "Internal server error" });
     }
-  }
+  },
 );
 
 /**
@@ -1205,7 +1217,9 @@ requestsRouter.get(
       const requests = await prisma.request.findMany({
         where: { userId },
         include: {
-          participators: { include: { user: true } },
+          participators: {
+            include: { user: true },
+          },
           _count: { select: { participators: true } },
         },
         orderBy: [{ createdAt: "desc" }, { id: "desc" }],
@@ -1229,7 +1243,7 @@ requestsRouter.get(
           request.attachments.length > 0
         ) {
           request.attachments = await createSignedUrls(
-            request.attachments as string[]
+            request.attachments as string[],
           );
         }
       }
@@ -1243,8 +1257,6 @@ requestsRouter.get(
         ? { id: lastItem.id, createdAt: lastItem.createdAt.toISOString() }
         : null;
 
-      console.log("🚀 ~ requests:", requests);
-
       return res.status(200).json({
         message: "User's requests fetched successfully",
         data: requests,
@@ -1256,7 +1268,7 @@ requestsRouter.get(
         .status(500)
         .json({ error: error.message || "Internal server error" });
     }
-  }
+  },
 );
 
 /**
@@ -1345,5 +1357,110 @@ requestsRouter.get(
         .status(500)
         .json({ error: error.message || "Internal server error" });
     }
-  }
+  },
+);
+
+/**
+ * @api {get} /requests/:requestId Get Request by ID
+ * @apiName GetRequestById
+ * @apiGroup Requests
+ *
+ * @apiHeader {String} Authorization Bearer token (JWT Access Token).
+ *
+ * @apiParam {String} requestId ID of the request to fetch.
+ *
+ */
+requestsRouter.get(
+  "/:requestId",
+  verifyAccessToken,
+  async (req: Request, res: Response) => {
+    try {
+      const { requestId } = req.params;
+      const userId = req.userId!;
+
+      if (!requestId) {
+        return res.status(400).json({ error: "Request ID is required" });
+      }
+
+      const request = await prisma.request.findUnique({
+        where: { id: requestId },
+        include: {
+          user: {
+            select: {
+              id: true,
+              fullName: true,
+              username: true,
+              email: true,
+              profilePictureUrl: true,
+            },
+          },
+          participators: {
+            include: {
+              user: {
+                select: {
+                  id: true,
+                  fullName: true,
+                  username: true,
+                  email: true,
+                  phoneNumber: true,
+                  profilePictureUrl: true,
+                  gender: true,
+                  isVerified: true,
+                },
+              },
+            },
+          },
+          _count: {
+            select: {
+              participators: true,
+            },
+          },
+        },
+      });
+
+      if (!request) {
+        return res.status(404).json({ error: "Request not found" });
+      }
+
+      // Handle attachments signed URLs
+      if (
+        Array.isArray(request.attachments) &&
+        request.attachments.length > 0
+      ) {
+        request.attachments = await createSignedUrls(
+          request.attachments as string[],
+        );
+      }
+
+      // Add isOwnRequest field
+      const isOwnRequest = request.userId === userId;
+
+      // Find current user's participation
+      const myParticipation = request.participators.find(
+        (p) => p.userId === userId,
+      );
+
+      // Match list view logic: alreadyOffered is true if pending
+      const alreadyOffered = myParticipation?.status === "pending";
+      const offerStatus = myParticipation?.status || null;
+
+      // Calculate accepted helpers count (matching participantsCount in list view)
+      const participantsCount = request.participators.filter(
+        (p) => p.status === "accepted",
+      ).length;
+
+      return res.status(200).json({
+        ...request,
+        isOwnRequest,
+        alreadyOffered,
+        offerStatus,
+        participantsCount,
+      });
+    } catch (error: any) {
+      console.error("Fetch request by ID error:", error);
+      return res
+        .status(500)
+        .json({ error: error.message || "Internal server error" });
+    }
+  },
 );
