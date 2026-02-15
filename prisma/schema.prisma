@@ -32,12 +32,16 @@ model User {
   // Relations (arrays for convenience)
   requests              Request[]
   requestParticipations RequestParticipator[]
-  // offers               Offer[]
+  offers                Offer[]
+  offerInteractions     OfferInteraction[]
   alerts                Alert[]
   alertAcknowledgements AlertAcknowledgement[]
   passwordResetTokens PasswordResetToken[]
 
   verifications Verification[]
+
+  reportsMade     Report[] @relation("Reporter")
+  reportsReceived Report[] @relation("ReportedUser")
 }
 
 model Verification {
@@ -151,6 +155,63 @@ model PasswordResetToken {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
+model Offer {
+  id                String           @id @default(uuid())
+  userId            String           @map("user_id")
+  user              User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  title             String           @db.VarChar(255)
+  description       String?          @db.Text
+  category          RequestCategory  @default(general)
+  type              OfferType        @default(service)
+  status            OfferStatus      @default(active)
+  moderationStatus  ModerationStatus @default(clean) @map("moderation_status")
+
+  // Spatial (Decimal matching Alerts schema for precision)
+  locationLat       Decimal          @map("location_lat") @db.Decimal(10, 7)
+  locationLng       Decimal          @map("location_lng") @db.Decimal(10, 7)
+
+  // --- RESOURCE (Physical Goods) ---
+  totalQuantity     Int?             @map("total_quantity")
+  remainingQuantity Int?             @map("remaining_quantity")
+  unit              String?          @db.VarChar(50)
+
+  // --- SERVICE (Skills/Time) ---
+  availability      String?          @db.VarChar(255)
+  experienceDesc    String?          @db.Text @map("experience_desc")
+
+  attachments       Json?
+  expiresAt         DateTime?        @map("expires_at")
+  createdAt         DateTime         @default(now()) @map("created_at")
+  updatedAt         DateTime         @default(now()) @updatedAt @map("updated_at")
+
+  interactions      OfferInteraction[]
+
+  @@unique([createdAt, id])
+}
+
+model OfferInteraction {
+  id        String            @id @default(uuid())
+  offerId   String            @map("offer_id")
+  userId    String            @map("user_id")
+  
+  status    InteractionStatus @default(pending)
+  
+  // --- RESOURCE Data ---
+  requestedQuantity Int?             @map("requested_quantity")
+
+  // --- SERVICE Data ---
+  message           String?          @db.Text
+
+  createdAt DateTime          @default(now()) @map("created_at")
+  updatedAt DateTime          @default(now()) @updatedAt @map("updated_at")
+
+  offer     Offer             @relation(fields: [offerId], references: [id], onDelete: Cascade)
+  user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([offerId, userId])
+}
+
 enum AlertStatus {
   active
   resolved
@@ -232,4 +293,76 @@ enum AlertCategory {
   community_notice
   event
   other
+}
+
+enum OfferType {
+  resource
+  service
+}
+
+enum OfferStatus {
+  active
+  paused
+  depleted // All resources claimed
+  completed // Offer finished/closed
+  cancelled
+}
+
+enum InteractionStatus {
+  pending
+  accepted
+  rejected
+  fulfilled
+  cancelled
+}
+
+model Report {
+  id           String           @id @default(uuid())
+  
+  // Who is reporting?
+  reporterId   String           @map("reporter_id")
+  reporter     User             @relation("Reporter", fields: [reporterId], references: [id], onDelete: Cascade)
+
+  // What is being reported? (Polymorphic Link)
+  entityType   ReportEntityType @map("entity_type")
+  entityId     String           @map("entity_id")
+  
+  // Target User (denormalized for quick user-banning context)
+  reportedUserId String?        @map("reported_user_id")
+  reportedUser   User?          @relation("ReportedUser", fields: [reportedUserId], references: [id], onDelete: SetNull)
+
+  reason       ReportReason
+  details      String?          @db.Text
+  status       ReportStatus     @default(pending)
+
+  // Admin actions
+  adminNotes   String?          @map("admin_notes") @db.Text
+  resolvedAt   DateTime?        @map("resolved_at")
+  
+  createdAt    DateTime         @default(now()) @map("created_at")
+  updatedAt    DateTime         @default(now()) @updatedAt @map("updated_at")
+}
+
+enum ReportEntityType {
+  request
+  offer
+  alert
+  user
+  message // Future proofing
+}
+
+enum ReportReason {
+  spam
+  harassment
+  inappropriate_content
+  fraud
+  hate_speech
+  other
+}
+
+enum ReportStatus {
+  pending
+  reviewed
+  resolved
+  dismissed
 }

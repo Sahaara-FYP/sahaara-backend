@@ -58,7 +58,11 @@ authRouter.post("/register", async (req: Request, res: Response) => {
       gender: newUser.gender,
     });
 
-    return res.status(201).json({ accessToken, refreshToken, user: safeUser });
+    return res.status(201).json({
+      accessToken,
+      refreshToken,
+      user: { ...safeUser, hasPendingVerification: false },
+    });
   } catch (error) {
     console.error("Register error:", error);
     return res.status(500).json({ error: "Internal server error" });
@@ -92,13 +96,6 @@ authRouter.post("/login", async (req: Request, res: Response) => {
           { phoneNumber: identifier },
         ],
       },
-      include: {
-        verifications: {
-          select: {
-            status: true,
-          },
-        },
-      },
     });
 
     if (!user) {
@@ -109,6 +106,10 @@ authRouter.post("/login", async (req: Request, res: Response) => {
     if (!isMatch) {
       return res.status(401).json({ error: "Invalid credentials" });
     }
+
+    const pendingVerification = await prisma.verification.findFirst({
+      where: { userId: user.id, status: "pending" },
+    });
 
     const accessToken = generateAccessToken({
       userId: user.id,
@@ -127,7 +128,10 @@ authRouter.post("/login", async (req: Request, res: Response) => {
       message: "Login successful",
       accessToken,
       refreshToken,
-      user: safeUser,
+      user: {
+        ...safeUser,
+        hasPendingVerification: !!pendingVerification,
+      },
     });
   } catch (error) {
     console.error("Login error:", error);
@@ -146,7 +150,7 @@ authRouter.post("/refresh-token", async (req: Request, res: Response) => {
     const decoded = jwt.verify(
       refreshToken,
       process.env.JWT_REFRESH_SECRET ||
-        "fallbacktoverysecretkeyhehekeysecretveryovertofallback"
+        "fallbacktoverysecretkeyhehekeysecretveryovertofallback",
     ) as { userId: string; role: string };
 
     const user = await prisma.user.findUnique({

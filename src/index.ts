@@ -9,9 +9,11 @@ import { fileURLToPath } from "url";
 import path from "path";
 import { requestsRouter } from "./modules/requests/requests.js";
 import { alertsRouter } from "./modules/alerts/alerts.js";
+import { offersRouter } from "./modules/offers/offers.js";
 import cors from "cors";
 import { usersRouter } from "./modules/users/users.js";
 import { analyticsRouter } from "./modules/analytics/analytics.js";
+import reportsRouter from "./modules/reports/reports.js";
 import prisma from "./utils/prisma.js";
 import http from "http";
 import { WebSocketServer } from "ws";
@@ -30,7 +32,7 @@ app.use(
       callback(null, true); // Allow all origins dynamically
     },
     credentials: true,
-  })
+  }),
 );
 
 app.use(express.json());
@@ -47,9 +49,11 @@ app.get("/api", (req: Request, res: Response) => {
 
 app.use("/api/auth", authRouter);
 app.use("/api/requests", requestsRouter);
+app.use("/api/offers", offersRouter);
 app.use("/api/alerts", alertsRouter);
 app.use("/api/users", usersRouter);
 app.use("/api/analytics", analyticsRouter);
+app.use("/api/reports", reportsRouter);
 
 app.use("/api/docs", express.static(path.join(__dirname, "../apidoc")));
 

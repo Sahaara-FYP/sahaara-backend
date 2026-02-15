@@ -105,7 +105,7 @@ alertsRouter.post(
       console.error("Create alert error:", error);
       return res.status(500).json({ error: "Internal server error" });
     }
-  }
+  },
 );
 
 /**
@@ -170,7 +170,7 @@ alertsRouter.get(
       if (isUser) {
         // users should not see blocked items
         filters.push(
-          `a.moderation_status != $${params.length + 1}::"ModerationStatus"`
+          `a.moderation_status != $${params.length + 1}::"ModerationStatus"`,
         );
         params.push("blocked");
 
@@ -184,7 +184,7 @@ alertsRouter.get(
         // admin can optionally filter by moderationStatus passed via query
         if (moderationStatus) {
           filters.push(
-            `a.moderation_status = $${params.length + 1}::"ModerationStatus"`
+            `a.moderation_status = $${params.length + 1}::"ModerationStatus"`,
           );
           params.push(moderationStatus);
         }
@@ -208,7 +208,7 @@ alertsRouter.get(
         filters.push(
           `(a.title ILIKE $${params.length + 1} OR a.description ILIKE $${
             params.length + 2
-          })`
+          })`,
         );
         params.push(`%${search}%`, `%${search}%`);
       }
@@ -266,7 +266,7 @@ alertsRouter.get(
       // --- Build ordering and cursor logic ---
       const limitNum = Math.max(
         1,
-        Math.min(100, parseInt(limit as string, 10) || 20)
+        Math.min(100, parseInt(limit as string, 10) || 20),
       ); // clamp
       const offsetNum = Math.max(0, parseInt(offset as string, 10) || 0);
 
@@ -356,7 +356,7 @@ alertsRouter.get(
         `;
         const countResult: any[] = await prisma.$queryRawUnsafe(
           countQuery,
-          ...finalParams
+          ...finalParams,
         );
         const total = countResult[0]?.total || 0;
 
@@ -415,7 +415,7 @@ alertsRouter.get(
       // --- Execute query ---
       const rows: any[] = await prisma.$queryRawUnsafe(
         finalQuery,
-        ...finalParams
+        ...finalParams,
       );
       const camelizedAlerts = keysToCamel<any[]>(rows || []);
 
@@ -425,7 +425,7 @@ alertsRouter.get(
         const page = Math.floor(offsetNum / limitNum) + 1;
         const countResult: any[] = await prisma.$queryRawUnsafe(
           `SELECT COUNT(*)::int AS total FROM (${innerSelect}) sub_count;`,
-          ...params
+          ...params,
         );
 
         const totalCount = countResult[0]?.total || 0;
@@ -489,26 +489,77 @@ alertsRouter.get(
       console.error("Get alerts error:", error);
       return res.status(500).json({ error: "Internal server error" });
     }
-  }
+  },
 );
 
-/**
- * @api {patch} /alerts Update an Alert
- * @apiName UpdateAlert
- * @apiGroup Alerts
- *
- * @apiHeader {String} Authorization Bearer access token.
- *
- * @apiBody {String} alertId                   ID of the alert to update (required).
- * @apiBody {String} [title]              Title of the alert.
- * @apiBody {String} [description]        Detailed description of the alert.
- * @apiBody {String} [category]           Category of the alert.
- * @apiBody {String="normal","high","low"} [urgencyLevel] Urgency level.
- * @apiBody {Number} [locationLat]        Latitude of the alert location.
- * @apiBody {Number} [locationLng]        Longitude of the alert location.
- * @apiBody {File[]} [attachments]        Optional new file attachments (multipart formdata).
- *
- */
+alertsRouter.get(
+  "/me",
+  verifyAccessToken,
+  async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId!;
+      const limit = parseInt(req.query.limit as string) || 20;
+
+      const cursorCreatedAt = req.query.cursorCreatedAt as string | undefined;
+      const cursorId = req.query.cursorId as string | undefined;
+
+      const alerts = await prisma.alert.findMany({
+        where: { userId },
+        include: {
+          acknowledgements: {
+            include: {
+              user: true,
+            },
+          },
+        },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        take: limit + 1,
+        ...(cursorCreatedAt && cursorId
+          ? {
+              skip: 1,
+              cursor: {
+                createdAt_id: {
+                  createdAt: new Date(cursorCreatedAt),
+                  id: cursorId,
+                },
+              },
+            }
+          : {}),
+      });
+
+      for (const alert of alerts) {
+        if (Array.isArray(alert.attachments) && alert.attachments.length > 0) {
+          alert.attachments = await createSignedUrls(
+            alert.attachments as string[],
+          );
+        }
+      }
+
+      const hasExtra = alerts.length > limit;
+      if (hasExtra) {
+        alerts.pop();
+      }
+
+      const lastItem = alerts[alerts.length - 1];
+      const nextCursor = lastItem
+        ? { id: lastItem.id, createdAt: lastItem.createdAt.toISOString() }
+        : null;
+      console.log("🚀 ~ alerts:", alerts);
+
+      return res.status(200).json({
+        message: "User's alerts fetched successfully",
+        data: alerts,
+        nextCursor,
+      });
+    } catch (error: any) {
+      console.error("Fetch user alerts error:", error);
+      return res
+        .status(500)
+        .json({ error: error.message || "Internal server error" });
+    }
+  },
+);
+
 alertsRouter.patch(
   "/",
   verifyAccessToken,
@@ -522,6 +573,7 @@ alertsRouter.patch(
         return res.status(400).json({ error: "Alert ID is required" });
       }
 
+      // ... existing findUnique and auth checks ...
       const existingAlert = await prisma.alert.findUnique({
         where: { id: alertId },
       });
@@ -587,7 +639,7 @@ alertsRouter.patch(
           }),
         },
       });
-      broadcast("alerts_changed");
+      broadcast("alerts_changed", { alertId }); // Updated broadcast
 
       return res.status(200).json({
         message: "Alert updated successfully",
@@ -597,18 +649,12 @@ alertsRouter.patch(
       console.error("Update alert error:", error);
       return res.status(500).json({ error: "Internal server error" });
     }
-  }
+  },
 );
 
 /**
  * @api {patch} /alerts/cancel Cancel an Alert
- * @apiName CancelAlert
- * @apiGroup Alerts
- *
- * @apiHeader {String} Authorization Bearer access token.
- *
- * @apiBody {String} alertId   ID of the alert to cancel (required).
- *
+ * ...
  */
 alertsRouter.patch(
   "/cancel",
@@ -645,7 +691,7 @@ alertsRouter.patch(
         where: { id: alertId },
         data: { status: "cancelled" },
       });
-      broadcast("alerts_changed");
+      broadcast("alerts_changed", { alertId }); // Updated broadcast
 
       return res.status(200).json({
         message: "Alert cancelled successfully",
@@ -655,7 +701,7 @@ alertsRouter.patch(
       console.error("Cancel alert error:", error);
       return res.status(500).json({ error: "Internal server error" });
     }
-  }
+  },
 );
 
 alertsRouter.patch(
@@ -693,7 +739,7 @@ alertsRouter.patch(
         where: { id: alertId },
         data: { status: "resolved" },
       });
-      broadcast("alerts_changed");
+      broadcast("alerts_changed", { alertId }); // Updated broadcast
 
       return res.status(200).json({
         message: "Alert resolved successfully",
@@ -703,19 +749,12 @@ alertsRouter.patch(
       console.error("Resolve alert error:", error);
       return res.status(500).json({ error: "Internal server error" });
     }
-  }
+  },
 );
 
 /**
  * @api {post} /alerts/acknowledgement Acknowledge an Alert
- * @apiName AcknowledgeAlert
- * @apiGroup Alerts
- *
- * @apiHeader {String} Authorization Bearer access token.
- *
- * @apiBody {String} alertId                 ID of the alert (required).
- * @apiBody {String} [comments]         Optional Comments.
- *
+ * ...
  */
 alertsRouter.post(
   "/acknowledge",
@@ -748,7 +787,7 @@ alertsRouter.post(
           userId,
         },
       });
-      broadcast("alerts_changed");
+      broadcast("alerts_changed", { alertId }); // Updated broadcast
 
       return res.status(201).json({
         message: "Alert acknowledged successfully",
@@ -760,11 +799,10 @@ alertsRouter.post(
           .status(400)
           .json({ error: "You have already acknowledged this alert" });
       }
-
       console.error("Error acknowledging alert:", error);
       return res.status(500).json({ error: "Internal server error" });
     }
-  }
+  },
 );
 
 /**
@@ -825,7 +863,7 @@ alertsRouter.patch(
       console.error("Error updating acknowledgement:", error);
       return res.status(500).json({ error: "Internal server error" });
     }
-  }
+  },
 );
 
 /**
@@ -881,7 +919,7 @@ alertsRouter.delete(
       console.error("Error revoking acknowledgement:", error);
       return res.status(500).json({ error: "Internal server error" });
     }
-  }
+  },
 );
 
 /**
@@ -924,7 +962,7 @@ alertsRouter.patch(
       console.error("Error updating alert moderation status:", error);
       return res.status(500).json({ error: "Internal Server Error" });
     }
-  }
+  },
 );
 
 /**
@@ -938,70 +976,86 @@ alertsRouter.patch(
  * @apiQuery {Number} [limit=20] Number of Alerts to fetch per page.
  *
  */
+
+/**
+ * @api {get} /alerts/:alertId Get Single Alert Details
+ * @apiName GetAlertDetails
+ * @apiGroup Alerts
+ * @apiPermission authenticated
+ *
+ * @apiHeader {String} Authorization Bearer token (JWT Access Token).
+ *
+ * @apiParam {String} alertId ID of the alert to fetch.
+ */
 alertsRouter.get(
-  "/me",
+  "/:alertId",
   verifyAccessToken,
   async (req: Request, res: Response) => {
     try {
+      const { alertId } = req.params;
       const userId = req.userId!;
-      const limit = parseInt(req.query.limit as string) || 20;
 
-      const cursorCreatedAt = req.query.cursorCreatedAt as string | undefined;
-      const cursorId = req.query.cursorId as string | undefined;
+      if (!alertId) {
+        return res.status(400).json({ error: "Alert ID is required" });
+      }
 
-      const alerts = await prisma.alert.findMany({
-        where: { userId },
+      const alert = await prisma.alert.findUnique({
+        where: { id: alertId },
         include: {
-          acknowledgements: {
-            include: {
-              user: true,
+          user: {
+            select: {
+              id: true,
+              fullName: true,
+              username: true,
+              profilePictureUrl: true,
+            },
+          },
+          _count: {
+            select: {
+              acknowledgements: true,
             },
           },
         },
-        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-        take: limit + 1,
-        ...(cursorCreatedAt && cursorId
-          ? {
-              skip: 1,
-              cursor: {
-                createdAt_id: {
-                  createdAt: new Date(cursorCreatedAt),
-                  id: cursorId,
-                },
-              },
-            }
-          : {}),
       });
 
-      for (const alert of alerts) {
-        if (Array.isArray(alert.attachments) && alert.attachments.length > 0) {
-          alert.attachments = await createSignedUrls(
-            alert.attachments as string[]
-          );
-        }
+      if (!alert) {
+        return res.status(404).json({ error: "Alert not found" });
       }
 
-      const hasExtra = alerts.length > limit;
-      if (hasExtra) {
-        alerts.pop();
-      }
+      // Check if user has acknowledged
+      const acknowledgement = await prisma.alertAcknowledgement.findUnique({
+        where: {
+          alertId_userId: {
+            alertId,
+            userId,
+          },
+        },
+      });
 
-      const lastItem = alerts[alerts.length - 1];
-      const nextCursor = lastItem
-        ? { id: lastItem.id, createdAt: lastItem.createdAt.toISOString() }
-        : null;
-      console.log("🚀 ~ alerts:", alerts);
+      const isOwnAlert = alert.userId === userId;
+
+      // Attach signed URLs for attachments
+      if (Array.isArray(alert.attachments) && alert.attachments.length > 0) {
+        alert.attachments = await createSignedUrls(
+          alert.attachments as string[],
+        );
+      }
 
       return res.status(200).json({
-        message: "User's alerts fetched successfully",
-        data: alerts,
-        nextCursor,
+        ...alert,
+        poster: alert.user,
+        acknowledgementsCount: (alert as any)._count?.acknowledgements || 0,
+        alreadyAcknowledged: !!acknowledgement,
+        isOwnAlert,
       });
-    } catch (error: any) {
-      console.error("Fetch user alerts error:", error);
-      return res
-        .status(500)
-        .json({ error: error.message || "Internal server error" });
+    } catch (error) {
+      console.error("Get alert details error:", error);
+      return res.status(500).json({ error: "Internal server error" });
     }
-  }
+  },
 );
+
+/**
+ * @api {patch} /alerts Update an Alert
+ * ...
+ */

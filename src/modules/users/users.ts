@@ -69,7 +69,7 @@ usersRouter.post(
 
       return res.status(200).json({
         message: "Profile created successfully",
-        user: updatedUser,
+        user: { ...updatedUser, hasPendingVerification: false },
       });
     } catch (error: any) {
       console.error("Update profile error:", error);
@@ -86,7 +86,7 @@ usersRouter.post(
 
       return res.status(500).json({ error: "Internal server error" });
     }
-  }
+  },
 );
 
 /**
@@ -134,7 +134,7 @@ usersRouter.patch(
         const { data, error } = await uploadFileToSupabase(
           "users",
           userId,
-          req.file
+          req.file,
         );
 
         if (error) {
@@ -162,8 +162,8 @@ usersRouter.patch(
             dateOfBirth: dateOfBirth
               ? new Date(dateOfBirth)
               : currentUserDetails?.dateOfBirth
-              ? currentUserDetails.dateOfBirth
-              : null,
+                ? currentUserDetails.dateOfBirth
+                : null,
             bio,
             cnicNumber,
             skills: skills ? JSON.parse(skills) : undefined,
@@ -171,9 +171,16 @@ usersRouter.patch(
           },
         });
 
+        const pendingVerification = await prisma.verification.findFirst({
+          where: { userId, status: "pending" },
+        });
+
         return res.status(200).json({
           message: "Profile updated successfully",
-          user: updatedUser,
+          user: {
+            ...updatedUser,
+            hasPendingVerification: !!pendingVerification,
+          },
         });
       }
     } catch (error: any) {
@@ -185,7 +192,7 @@ usersRouter.patch(
 
       return res.status(500).json({ error: "Internal server error" });
     }
-  }
+  },
 );
 
 /**
@@ -239,7 +246,7 @@ usersRouter.post(
       console.error("Change password error:", error);
       return res.status(500).json({ error: "Internal server error" });
     }
-  }
+  },
 );
 
 /**
@@ -389,19 +396,19 @@ usersRouter.post(
       const { data: cnicFrontData } = await uploadFileToSupabase(
         "kyc_verification",
         userId,
-        files.cnicFront[0]
+        files.cnicFront[0],
       );
 
       const { data: cnicBackData } = await uploadFileToSupabase(
         "kyc_verification",
         userId,
-        files.cnicBack[0]
+        files.cnicBack[0],
       );
 
       const { data: selfieWithCnicData } = await uploadFileToSupabase(
         "kyc_verification",
         userId,
-        files.selfieWithCnic[0]
+        files.selfieWithCnic[0],
       );
       const cnicFrontUrl = cnicFrontData?.path || "";
       const cnicBackUrl = cnicBackData?.path || "";
@@ -425,7 +432,7 @@ usersRouter.post(
       console.error("KYC verification error:", error);
       return res.status(500).json({ error: "Internal server error" });
     }
-  }
+  },
 );
 
 usersRouter.get(
@@ -451,11 +458,18 @@ usersRouter.get(
         });
       }
 
+      const pendingVerification = await prisma.verification.findFirst({
+        where: { userId, status: "pending" },
+      });
+
       const { passwordHash, ...safeUser } = user;
 
       return res.status(200).json({
         message: "User data fetched successfully.",
-        user: safeUser,
+        user: {
+          ...safeUser,
+          hasPendingVerification: !!pendingVerification,
+        },
       });
     } catch (error) {
       console.error("Error fetching user data:", error);
@@ -464,5 +478,5 @@ usersRouter.get(
         message: "Internal server error.",
       });
     }
-  }
+  },
 );
