@@ -4,16 +4,14 @@ export async function createSignedUrls(paths: string[]) {
   const signedUrls: string[] = [];
 
   for (const path of paths) {
-    const { data, error } = await supabase.storage
-      .from("attachments")
-      .createSignedUrl(path, 60 * 60);
+    const { data } = supabase.storage.from("attachments").getPublicUrl(path);
 
-    if (error) {
-      console.error("Error creating signed URL:", error);
+    if (!data) {
+      console.error("Error creating signed URL");
       continue;
     }
 
-    signedUrls.push(data.signedUrl);
+    signedUrls.push(data.publicUrl);
   }
 
   return signedUrls;

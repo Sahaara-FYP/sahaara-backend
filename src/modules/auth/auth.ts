@@ -3,6 +3,7 @@ import prisma from "../../utils/prisma.js";
 import bcrypt from "bcryptjs";
 import { generateAccessToken, generateRefreshToken } from "./auth.service.js";
 import jwt from "jsonwebtoken";
+import { createSignedUrls } from "../../utils/createSignedURL.js";
 
 export const authRouter = Router();
 
@@ -44,6 +45,13 @@ authRouter.post("/register", async (req: Request, res: Response) => {
         fullName: full_name,
       },
     });
+
+    if (newUser.profilePictureUrl) {
+      const [signedUrl] = await createSignedUrls([newUser.profilePictureUrl]);
+      if (signedUrl) {
+        newUser.profilePictureUrl = signedUrl;
+      }
+    }
 
     const { passwordHash, ...safeUser } = newUser;
 
@@ -121,6 +129,13 @@ authRouter.post("/login", async (req: Request, res: Response) => {
       role: user.role,
       gender: user.gender,
     });
+
+    if (user.profilePictureUrl) {
+      const [signedUrl] = await createSignedUrls([user.profilePictureUrl]);
+      if (signedUrl) {
+        user.profilePictureUrl = signedUrl;
+      }
+    }
 
     const { passwordHash, ...safeUser } = user;
 

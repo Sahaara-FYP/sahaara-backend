@@ -14,6 +14,9 @@ import cors from "cors";
 import { usersRouter } from "./modules/users/users.js";
 import { analyticsRouter } from "./modules/analytics/analytics.js";
 import reportsRouter from "./modules/reports/reports.js";
+import { ratingsRouter } from "./modules/ratings/ratings.js";
+import { notificationsRouter } from "./modules/notifications/notifications.js";
+import { initExpiryService } from "./services/expiryService.js";
 import prisma from "./utils/prisma.js";
 import http from "http";
 import { WebSocketServer } from "ws";
@@ -54,6 +57,8 @@ app.use("/api/alerts", alertsRouter);
 app.use("/api/users", usersRouter);
 app.use("/api/analytics", analyticsRouter);
 app.use("/api/reports", reportsRouter);
+app.use("/api/ratings", ratingsRouter);
+app.use("/api/notifications", notificationsRouter); // NEW ROUTE
 
 app.use("/api/docs", express.static(path.join(__dirname, "../apidoc")));
 
@@ -66,6 +71,7 @@ async function startServer() {
     console.log("Supabase connection successful. Starting server...");
 
     initWebsocket(server);
+    initExpiryService();
 
     server.listen(PORT, () => {
       console.log(`Server running at http://localhost:${PORT}`);

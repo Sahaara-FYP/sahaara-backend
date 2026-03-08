@@ -8,6 +8,7 @@ import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { createProfileSchema } from "./users.validation.js";
 import { uploadFileToSupabase } from "../../utils/uploadFileToSupabase.js";
+import { createSignedUrls } from "../../utils/createSignedURL.js";
 
 export const usersRouter = Router();
 
@@ -120,6 +121,8 @@ usersRouter.patch(
         dateOfBirth,
         bio,
         cnicNumber,
+        phoneNumber,
+        address,
         skills,
       } = req.body || {};
 
@@ -128,8 +131,9 @@ usersRouter.patch(
       });
 
       const oldProfileUrl = currentUserDetails?.profilePictureUrl ?? null;
-
       let newProfileUrl = oldProfileUrl;
+
+      // Handle profile picture upload (optional)
       if (req.file) {
         const { data, error } = await uploadFileToSupabase(
           "users",
@@ -152,37 +156,49 @@ usersRouter.patch(
             }
           }
         }
-
-        const updatedUser = await prisma.user.update({
-          where: { id: userId },
-          data: {
-            fullName,
-            username,
-            gender,
-            dateOfBirth: dateOfBirth
-              ? new Date(dateOfBirth)
-              : currentUserDetails?.dateOfBirth
-                ? currentUserDetails.dateOfBirth
-                : null,
-            bio,
-            cnicNumber,
-            skills: skills ? JSON.parse(skills) : undefined,
-            profilePictureUrl: newProfileUrl,
-          },
-        });
-
-        const pendingVerification = await prisma.verification.findFirst({
-          where: { userId, status: "pending" },
-        });
-
-        return res.status(200).json({
-          message: "Profile updated successfully",
-          user: {
-            ...updatedUser,
-            hasPendingVerification: !!pendingVerification,
-          },
-        });
       }
+
+      // Always run the DB update regardless of whether a file was uploaded
+      const updatedUser = await prisma.user.update({
+        where: { id: userId },
+        data: {
+          ...(fullName !== undefined && { fullName }),
+          ...(username !== undefined && { username }),
+          ...(gender !== undefined && { gender }),
+          ...(bio !== undefined && { bio }),
+          ...(cnicNumber !== undefined && { cnicNumber }),
+          ...(phoneNumber !== undefined && { phoneNumber }),
+          ...(address !== undefined && { address }),
+          ...(skills !== undefined && { skills: JSON.parse(skills) }),
+          dateOfBirth: dateOfBirth
+            ? new Date(dateOfBirth)
+            : (currentUserDetails?.dateOfBirth ?? null),
+          profilePictureUrl: newProfileUrl,
+        },
+      });
+
+      const pendingVerification = await prisma.verification.findFirst({
+        where: { userId, status: "pending" },
+      });
+
+      if (updatedUser.profilePictureUrl) {
+        const [signedUrl] = await createSignedUrls([
+          updatedUser.profilePictureUrl,
+        ]);
+        if (signedUrl) {
+          updatedUser.profilePictureUrl = signedUrl;
+        }
+      }
+
+      const { passwordHash, ...safeUser } = updatedUser as any;
+
+      return res.status(200).json({
+        message: "Profile updated successfully",
+        user: {
+          ...safeUser,
+          hasPendingVerification: !!pendingVerification,
+        },
+      });
     } catch (error: any) {
       console.error("Update profile error:", error);
 
@@ -435,6 +451,60 @@ usersRouter.post(
   },
 );
 
+/**
+ * @api {get} /users/me/stats Get User Statistics
+ * @apiName GetUserStats
+ * @apiGroup Users
+ *
+ * @apiHeader {String} Authorization Bearer access token.
+ *
+ * @apiSuccess {Number} totalRequests Total requests posted by the user.
+ * @apiSuccess {Number} totalOffers Total offers posted by the user.
+ * @apiSuccess {Number} totalParticipations Total requests the user participated in (helped with).
+ * @apiSuccess {Number} totalAlerts Total alerts posted by the user.
+ */
+usersRouter.get(
+  "/me/stats",
+  verifyAccessToken,
+  async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId!;
+
+      const [
+        totalRequests,
+        totalOffers,
+        totalParticipations,
+        totalAlerts,
+        user,
+      ] = await Promise.all([
+        prisma.request.count({ where: { userId } }),
+        prisma.offer.count({ where: { userId } }),
+        prisma.requestParticipator.count({ where: { userId } }),
+        prisma.alert.count({ where: { userId } }),
+        prisma.user.findUnique({
+          where: { id: userId },
+          select: { averageRating: true, totalRatings: true },
+        }),
+      ]);
+
+      return res.status(200).json({
+        message: "User stats fetched successfully.",
+        stats: {
+          totalRequests,
+          totalOffers,
+          totalParticipations,
+          totalAlerts,
+          averageRating: user?.averageRating || 0,
+          totalRatings: user?.totalRatings || 0,
+        },
+      });
+    } catch (error) {
+      console.error("Error fetching user stats:", error);
+      return res.status(500).json({ error: "Internal server error" });
+    }
+  },
+);
+
 usersRouter.get(
   "/me",
   verifyAccessToken,
@@ -462,6 +532,13 @@ usersRouter.get(
         where: { userId, status: "pending" },
       });
 
+      if (user.profilePictureUrl) {
+        const [signedUrl] = await createSignedUrls([user.profilePictureUrl]);
+        if (signedUrl) {
+          user.profilePictureUrl = signedUrl;
+        }
+      }
+
       const { passwordHash, ...safeUser } = user;
 
       return res.status(200).json({
@@ -477,6 +554,49 @@ usersRouter.get(
         success: false,
         message: "Internal server error.",
       });
+    }
+  },
+);
+
+/**
+ * @api {patch} /users/location Sync User Location
+ * @apiName SyncUserLocation
+ * @apiGroup Users
+ *
+ * @apiHeader {String} Authorization Bearer access token.
+ *
+ * @apiBody {Number} lat Latitude coordinate.
+ * @apiBody {Number} lng Longitude coordinate.
+ *
+ * @apiSuccess {String} message Success message.
+ */
+usersRouter.patch(
+  "/location",
+  verifyAccessToken,
+  async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId!;
+      const { lat, lng } = req.body;
+
+      if (typeof lat !== "number" || typeof lng !== "number") {
+        return res
+          .status(400)
+          .json({ error: "Latitude and longitude must be valid numbers." });
+      }
+
+      await prisma.user.update({
+        where: { id: userId },
+        data: {
+          lastLocationLat: lat,
+          lastLocationLng: lng,
+          locationUpdatedAt: new Date(),
+        },
+      });
+
+      return res.status(200).json({ message: "Location updated successfully" });
+    } catch (error) {
+      console.error("Error updating location:", error);
+      return res.status(500).json({ error: "Internal server error" });
     }
   },
 );

@@ -8,6 +8,11 @@ import { createSignedUrls } from "../../utils/createSignedURL.js";
 import { verifyRole } from "../../middleware/verifyRole.js";
 import { keysToCamel } from "../../utils/camelize.js";
 import { broadcast } from "../../utils/ws.js";
+import {
+  smartMatchRequest,
+  sendDirectNotification,
+  broadcastNotification,
+} from "../../services/notificationService.js";
 
 export const requestsRouter = Router();
 
@@ -73,6 +78,10 @@ requestsRouter.post(
             visibilityVerifiedOnly,
             visibilityWomenOnly,
             maxHelpers,
+            expiresAt: new Date(
+              Date.now() +
+                (urgencyLevel === "high" ? 2 : 7) * 24 * 60 * 60 * 1000,
+            ),
             attachments: [],
           },
         });
@@ -110,6 +119,18 @@ requestsRouter.post(
       });
 
       broadcast("requests_changed");
+
+      // Smart Matching & Proximity Broadcast (Top 20 users within 10km radius)
+      await smartMatchRequest(
+        newRequest.id,
+        "New Help Request Nearby",
+        `${newRequest.title} needs your help!`,
+        newRequest.category,
+        newRequest.locationLat,
+        newRequest.locationLng,
+        10, // 10km radius
+        20, // Limit to Top 20 for quality matching
+      );
 
       return res.status(201).json({
         message: "Request created successfully",
@@ -879,6 +900,16 @@ requestsRouter.patch(
         return { updatedParticipator, updatedRequest };
       });
       broadcast("requests_changed", { requestId: participator.requestId });
+
+      // Notify the helper that their participation was accepted
+      await sendDirectNotification(
+        participator.userId,
+        "Help Offer Accepted",
+        `Your offer to help with "${participator.request.title}" was accepted!`,
+        "request_accepted",
+        { requestId: participator.requestId },
+      );
+
       return res.status(200).json({
         message: `Participator accepted successfully`,
         participator: result.updatedParticipator,
@@ -1461,6 +1492,78 @@ requestsRouter.get(
       return res
         .status(500)
         .json({ error: error.message || "Internal server error" });
+    }
+  },
+);
+
+/**
+ * @api {patch} /requests/renew Renew a Request
+ * @apiName RenewRequest
+ * @apiGroup Requests
+ * @apiPermission authenticated
+ *
+ * @apiHeader {String} Authorization Bearer token (JWT Access Token).
+ *
+ * @apiBody {String} requestId ID of the request to renew (required).
+ */
+requestsRouter.patch(
+  "/renew",
+  verifyAccessToken,
+  async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId!;
+      const { requestId } = req.body || {};
+
+      if (!requestId) {
+        return res.status(400).json({ error: "requestId is required" });
+      }
+
+      const request = await prisma.request.findUnique({
+        where: { id: requestId },
+      });
+
+      if (!request) {
+        return res.status(404).json({ error: "Request not found" });
+      }
+
+      if (request.userId !== userId) {
+        return res
+          .status(403)
+          .json({ error: "Not authorized to renew this request" });
+      }
+
+      // Only allow renewal if expired or pending/partially_accepted
+      if (
+        !["pending", "partially_accepted", "expired"].includes(request.status)
+      ) {
+        return res.status(400).json({
+          error: `Cannot renew a ${request.status} request`,
+        });
+      }
+
+      // Set new expiry: 7 days for normal, 2 days for high urgency
+      const newExpiresAt = new Date(
+        Date.now() +
+          (request.urgencyLevel === "high" ? 2 : 7) * 24 * 60 * 60 * 1000,
+      );
+
+      const updatedRequest = await prisma.request.update({
+        where: { id: requestId },
+        data: {
+          expiresAt: newExpiresAt,
+          status: request.status === "expired" ? "pending" : request.status,
+        },
+      });
+
+      broadcast("requests_changed", { requestId });
+
+      return res.status(200).json({
+        message: "Request renewed successfully",
+        request: updatedRequest,
+      });
+    } catch (error: any) {
+      console.error("Renew request error:", error);
+      return res.status(500).json({ error: "Internal server error" });
     }
   },
 );

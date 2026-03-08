@@ -8,6 +8,7 @@ import { createSignedUrls } from "../../utils/createSignedURL.js";
 import { keysToCamel } from "../../utils/camelize.js";
 import { verifyRole } from "../../middleware/verifyRole.js";
 import { broadcast } from "../../utils/ws.js";
+import { broadcastNotification } from "../../services/notificationService.js";
 
 export const alertsRouter = Router();
 
@@ -96,6 +97,17 @@ alertsRouter.post(
         return alert;
       });
       broadcast("alerts_changed");
+
+      // Broadcast alert to all nearby users (20km radius, no limit)
+      await broadcastNotification(
+        `Alert: ${newAlert.title}`,
+        newAlert.description || "A new alert has been posted in your area.",
+        "alert_nearby", // Fixed type
+        { alertId: newAlert.id },
+        newAlert.locationLat,
+        newAlert.locationLng,
+        20, // 20km radius for alerts
+      );
 
       return res.status(201).json({
         message: "Alert created successfully",

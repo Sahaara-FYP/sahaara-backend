@@ -29,6 +29,18 @@ model User {
   completedOnboarding Boolean            @default(false) @map("completed_onboarding")
   isVerified Boolean @default(false) @map("is_verified")
 
+  // Location (synced from mobile app)
+  lastLocationLat       Float?             @map("last_location_lat")
+  lastLocationLng       Float?             @map("last_location_lng")
+  locationUpdatedAt     DateTime?          @map("location_updated_at")
+
+  // Trust / Rating
+  averageRating         Float?             @default(0) @map("average_rating")
+  totalRatings          Int                @default(0) @map("total_ratings")
+
+  // Push Notifications
+  pushToken             String?            @map("push_token")
+
   // Relations (arrays for convenience)
   requests              Request[]
   requestParticipations RequestParticipator[]
@@ -42,6 +54,10 @@ model User {
 
   reportsMade     Report[] @relation("Reporter")
   reportsReceived Report[] @relation("ReportedUser")
+
+  ratingsGiven    Rating[] @relation("RatingFrom")
+  ratingsReceived Rating[] @relation("RatingTo")
+  notifications   Notification[]
 }
 
 model Verification {
@@ -88,6 +104,27 @@ model Request {
   // ratings              Rating[]
 
   @@unique([createdAt, id])
+}
+
+model Rating {
+  id        String   @id @default(uuid())
+  fromId    String   @map("from_id")
+  toId      String   @map("to_id")
+
+  score     Int      // 1–5
+  comment   String?  @db.Text
+
+  // Context (at least one should be set)
+  requestId String?  @map("request_id")
+  offerId   String?  @map("offer_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  from User @relation("RatingFrom", fields: [fromId], references: [id], onDelete: Cascade)
+  to   User @relation("RatingTo",   fields: [toId],   references: [id], onDelete: Cascade)
+
+  @@unique([fromId, toId, requestId], name: "one_rating_per_request")
+  @@unique([fromId, toId, offerId],   name: "one_rating_per_offer")
 }
 
 model RequestParticipator {
@@ -365,4 +402,30 @@ enum ReportStatus {
   reviewed
   resolved
   dismissed
+}
+
+model Notification {
+  id        String           @id @default(uuid())
+  userId    String           @map("user_id")
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  title     String
+  body      String           @db.Text
+  type      NotificationType
+  metadata  Json?            // e.g. { requestId, offerId, alertId }
+  read      Boolean          @default(false)
+
+  createdAt DateTime         @default(now()) @map("created_at")
+}
+
+enum NotificationType {
+  request_accepted
+  request_completed
+  offer_accepted
+  offer_rejected
+  offer_fulfilled
+  alert_nearby
+  help_request_nearby
+  rating_received
+  general
 }

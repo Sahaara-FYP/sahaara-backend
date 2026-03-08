@@ -7,6 +7,7 @@ import supabase from "../../utils/supabase.js";
 import { createSignedUrls } from "../../utils/createSignedURL.js";
 import { keysToCamel } from "../../utils/camelize.js";
 import { broadcast } from "../../utils/ws.js";
+import { sendDirectNotification } from "../../services/notificationService.js";
 
 export const offersRouter = Router();
 
@@ -709,6 +710,15 @@ offersRouter.patch(
 
         broadcast("offers_changed", { offerId: interaction.offerId });
 
+        // Notify User
+        await sendDirectNotification(
+          interaction.userId,
+          "Offer Request Accepted",
+          `Your request for "${interaction.offer.title}" has been accepted!`,
+          "offer_accepted",
+          { offerId: interaction.offerId },
+        );
+
         return res.status(200).json({
           message: "Interaction status updated successfully",
           interaction: result,
@@ -722,6 +732,24 @@ offersRouter.patch(
       });
 
       broadcast("offers_changed", { offerId: interaction.offerId });
+
+      // Notify User
+      if (status === "accepted" || status === "rejected") {
+        const title =
+          status === "accepted"
+            ? "Offer Request Accepted"
+            : "Offer Request Rejected";
+        const body =
+          status === "accepted"
+            ? `Your request for "${interaction.offer.title}" has been accepted!`
+            : `Your request for "${interaction.offer.title}" was declined.`;
+        const type =
+          status === "accepted" ? "offer_accepted" : "offer_rejected";
+
+        await sendDirectNotification(interaction.userId, title, body, type, {
+          offerId: interaction.offerId,
+        });
+      }
 
       return res.status(200).json({
         message: "Interaction status updated successfully",
