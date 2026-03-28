@@ -1545,12 +1545,31 @@ requestsRouter.get(
         (p) => p.status === "accepted",
       ).length;
 
+      // --- Ratings check ---
+      const ratings = await prisma.rating.findMany({
+        where: { requestId },
+        select: { fromId: true, toId: true },
+      });
+
+      const hasRatedOwner = isOwnRequest
+        ? false
+        : ratings.some((r) => r.fromId === userId && r.toId === request.userId);
+
+      const participatorsWithRating = request.participators.map((p) => ({
+        ...p,
+        hasBeenRated: ratings.some(
+          (r) => r.fromId === request.userId && r.toId === p.userId,
+        ),
+      }));
+
       return res.status(200).json({
         ...request,
+        participators: participatorsWithRating,
         isOwnRequest,
         alreadyOffered,
         offerStatus,
         participantsCount,
+        hasRatedOwner,
       });
     } catch (error: any) {
       console.error("Fetch request by ID error:", error);

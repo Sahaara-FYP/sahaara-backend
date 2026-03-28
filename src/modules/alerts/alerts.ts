@@ -98,15 +98,17 @@ alertsRouter.post(
       });
       broadcast("alerts_changed");
 
-      // Broadcast alert to all nearby users (20km radius, no limit)
+      // Broadcast alert to all nearby users (20km radius, no limit, exclude creator)
       await broadcastNotification(
         `Alert: ${newAlert.title}`,
         newAlert.description || "A new alert has been posted in your area.",
         "alert_nearby", // Fixed type
         { alertId: newAlert.id },
-        newAlert.locationLat,
-        newAlert.locationLng,
+        Number(newAlert.locationLat),
+        Number(newAlert.locationLng),
         20, // 20km radius for alerts
+        undefined, // no limit
+        newAlert.userId, // exclude the creator
       );
 
       return res.status(201).json({

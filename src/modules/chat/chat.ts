@@ -18,7 +18,6 @@ chatRouter.get(
     try {
       const rooms = await prisma.chatRoom.findMany({
         where: {
-          status: "active",
           participants: { some: { userId } },
         },
         include: {
@@ -61,10 +60,14 @@ chatRouter.get(
     const cursor = req.query.cursor as string | undefined;
     const limit = Math.min(parseInt((req.query.limit as string) || "30"), 100);
 
+    if (!roomId) {
+      return res.status(400).json({ error: "Room ID is required" });
+    }
+
     try {
       // Verify user is a participant in this room
-      const participant = await prisma.chatParticipant.findUnique({
-        where: { roomId_userId: { roomId, userId } },
+      const participant = await prisma.chatParticipant.findFirst({
+        where: { roomId, userId },
       });
 
       if (!participant) {
@@ -73,13 +76,12 @@ chatRouter.get(
           .json({ error: "You are not a participant in this room" });
       }
 
-      // Verify room is active
+      // Fetch room to determine active status (allow read-only for inactive)
       const room = await prisma.chatRoom.findUnique({ where: { id: roomId } });
-      if (!room || room.status !== "active") {
-        return res
-          .status(403)
-          .json({ error: "This chat room is no longer active" });
+      if (!room) {
+        return res.status(404).json({ error: "Room not found" });
       }
+      const isActive = room.status === "active";
 
       const messages = await prisma.message.findMany({
         where: { roomId },
@@ -96,7 +98,7 @@ chatRouter.get(
       const nextCursor =
         messages.length === limit ? messages[messages.length - 1]?.id : null;
 
-      return res.json({ messages: messages.reverse(), nextCursor });
+      return res.json({ messages: messages.reverse(), nextCursor, isActive });
     } catch (err) {
       console.error("GET /chat/rooms/:roomId/messages error:", err);
       return res.status(500).json({ error: "Failed to fetch messages" });
@@ -125,21 +127,43 @@ chatRouter.post(
     }
 
     try {
+      if (!roomId) {
+        return res.status(400).json({ error: "Room ID is required" });
+      }
+
+      console.log(
+        `[Chat] POST message attempt. roomId: ${roomId}, userId: ${userId}`,
+      );
+
       // Verify user is a participant and the room is active
-      const [participant, room] = await Promise.all([
-        prisma.chatParticipant.findUnique({
-          where: { roomId_userId: { roomId, userId } },
+      const [participant, room, actualParticipants] = await Promise.all([
+        prisma.chatParticipant.findFirst({
+          where: { roomId, userId },
         }),
         prisma.chatRoom.findUnique({ where: { id: roomId } }),
+        prisma.chatParticipant.findMany({
+          where: { roomId },
+          select: { userId: true },
+        }),
       ]);
 
       if (!participant) {
+        console.warn(
+          `[Chat] 403 Forbidden. User ${userId} is not in participants list.`,
+        );
+        console.log(
+          `[Chat] Actual participants in room ${roomId}:`,
+          actualParticipants.map((p) => p.userId),
+        );
         return res
           .status(403)
           .json({ error: "You are not a participant in this room" });
       }
 
       if (!room || room.status !== "active") {
+        console.warn(
+          `[Chat] Room ${roomId} not found or not active. Status: ${room?.status}`,
+        );
         return res
           .status(403)
           .json({ error: "This chat room is no longer active" });
