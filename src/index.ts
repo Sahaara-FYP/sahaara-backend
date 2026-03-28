@@ -16,6 +16,7 @@ import { analyticsRouter } from "./modules/analytics/analytics.js";
 import reportsRouter from "./modules/reports/reports.js";
 import { ratingsRouter } from "./modules/ratings/ratings.js";
 import { notificationsRouter } from "./modules/notifications/notifications.js";
+import { chatRouter } from "./modules/chat/chat.js";
 import { initExpiryService } from "./services/expiryService.js";
 import prisma from "./utils/prisma.js";
 import http from "http";
@@ -58,7 +59,8 @@ app.use("/api/users", usersRouter);
 app.use("/api/analytics", analyticsRouter);
 app.use("/api/reports", reportsRouter);
 app.use("/api/ratings", ratingsRouter);
-app.use("/api/notifications", notificationsRouter); // NEW ROUTE
+app.use("/api/notifications", notificationsRouter);
+app.use("/api/chat", chatRouter);
 
 app.use("/api/docs", express.static(path.join(__dirname, "../apidoc")));
 

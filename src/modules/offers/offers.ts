@@ -8,6 +8,12 @@ import { createSignedUrls } from "../../utils/createSignedURL.js";
 import { keysToCamel } from "../../utils/camelize.js";
 import { broadcast } from "../../utils/ws.js";
 import { sendDirectNotification } from "../../services/notificationService.js";
+import {
+  closeAllRoomsForContext,
+  closeDirectRoomForInteraction,
+  createGroupRoom,
+  onInteractionAccepted,
+} from "../../utils/chatHelpers.js";
 
 export const offersRouter = Router();
 
@@ -126,6 +132,11 @@ offersRouter.post(
       });
 
       broadcast("offers_changed");
+
+      // Create a group ChatRoom for this offer
+      createGroupRoom(userId, { offerId: newOffer.id }).catch((e) =>
+        console.error("createGroupRoom error:", e),
+      );
 
       // Broadcast new offer
       broadcast("offers_changed", { offerId: newOffer.id });
@@ -587,23 +598,38 @@ offersRouter.post(
         },
       });
 
-      if (existingInteraction) {
+      if (
+        existingInteraction &&
+        !["cancelled", "rejected"].includes(existingInteraction.status)
+      ) {
         return res.status(400).json({
           error: `You already have a ${existingInteraction.status} interaction with this offer`,
         });
       }
 
-      const interaction = await prisma.offerInteraction.create({
-        data: {
-          offerId,
-          userId,
-          status: "pending",
-          ...(offer.type === "resource" && {
-            requestedQuantity: parseInt(requestedQuantity),
-          }),
-          ...(offer.type === "service" && { message }),
-        },
-      });
+      let interaction;
+      const interactionData = {
+        status: "pending" as const,
+        ...(offer.type === "resource" && {
+          requestedQuantity: parseInt(requestedQuantity),
+        }),
+        ...(offer.type === "service" && { message }),
+      };
+
+      if (existingInteraction) {
+        interaction = await prisma.offerInteraction.update({
+          where: { id: existingInteraction.id },
+          data: interactionData,
+        });
+      } else {
+        interaction = await prisma.offerInteraction.create({
+          data: {
+            offerId,
+            userId,
+            ...interactionData,
+          },
+        });
+      }
       broadcast("offers_changed", { offerId });
 
       return res.status(201).json({
@@ -708,6 +734,11 @@ offersRouter.patch(
           return updatedInteraction;
         });
 
+        // Create direct room + add to group
+        onInteractionAccepted(interaction.offer.userId, interaction.userId, {
+          offerId: interaction.offerId,
+        }).catch((e) => console.error("onInteractionAccepted error:", e));
+
         broadcast("offers_changed", { offerId: interaction.offerId });
 
         // Notify User
@@ -733,18 +764,51 @@ offersRouter.patch(
 
       broadcast("offers_changed", { offerId: interaction.offerId });
 
+      // Handle chat room lifecycle
+      if (status === "accepted") {
+        // Service acceptance: create direct + group membership
+        onInteractionAccepted(interaction.offer.userId, interaction.userId, {
+          offerId: interaction.offerId,
+        }).catch((e) => console.error("onInteractionAccepted error:", e));
+      } else if (status === "cancelled" || status === "rejected") {
+        closeDirectRoomForInteraction(
+          interaction.offer.userId,
+          interaction.userId,
+          { offerId: interaction.offerId },
+        ).catch((e) =>
+          console.error("closeDirectRoomForInteraction error:", e),
+        );
+      } else if (status === "fulfilled") {
+        // Closing all rooms when the entire offer is fulfilled
+        closeAllRoomsForContext({ offerId: interaction.offerId }).catch((e) =>
+          console.error("closeAllRoomsForContext error:", e),
+        );
+      }
+
       // Notify User
-      if (status === "accepted" || status === "rejected") {
+      if (
+        status === "accepted" ||
+        status === "rejected" ||
+        status === "fulfilled"
+      ) {
         const title =
           status === "accepted"
             ? "Offer Request Accepted"
-            : "Offer Request Rejected";
+            : status === "rejected"
+              ? "Offer Request Rejected"
+              : "Offer Fulfilled";
         const body =
           status === "accepted"
             ? `Your request for "${interaction.offer.title}" has been accepted!`
-            : `Your request for "${interaction.offer.title}" was declined.`;
+            : status === "rejected"
+              ? `Your request for "${interaction.offer.title}" was declined.`
+              : `Your request for "${interaction.offer.title}" has been marked as fulfilled. Please rate the offerer!`;
         const type =
-          status === "accepted" ? "offer_accepted" : "offer_rejected";
+          status === "accepted"
+            ? "offer_accepted"
+            : status === "rejected"
+              ? "offer_rejected"
+              : "offer_fulfilled";
 
         await sendDirectNotification(interaction.userId, title, body, type, {
           offerId: interaction.offerId,
