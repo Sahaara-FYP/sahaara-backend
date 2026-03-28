@@ -13,7 +13,7 @@ chatRouter.get(
   "/rooms",
   verifyAccessToken,
   async (req: Request, res: Response) => {
-    const userId = (req as any).user.id;
+    const userId = req.userId!;
 
     try {
       const rooms = await prisma.chatRoom.findMany({
@@ -56,7 +56,7 @@ chatRouter.get(
   "/rooms/:roomId/messages",
   verifyAccessToken,
   async (req: Request, res: Response) => {
-    const userId = (req as any).user.id;
+    const userId = req.userId!;
     const { roomId } = req.params;
     const cursor = req.query.cursor as string | undefined;
     const limit = Math.min(parseInt((req.query.limit as string) || "30"), 100);
@@ -112,7 +112,7 @@ chatRouter.post(
   "/rooms/:roomId/messages",
   verifyAccessToken,
   async (req: Request, res: Response) => {
-    const userId = (req as any).user.id;
+    const userId = req.userId!;
     const { roomId } = req.params;
     const { content } = req.body;
 
