@@ -58,6 +58,9 @@ model User {
   ratingsGiven    Rating[] @relation("RatingFrom")
   ratingsReceived Rating[] @relation("RatingTo")
   notifications   Notification[]
+
+  chatParticipations ChatParticipant[]
+  messagesSent       Message[]
 }
 
 model Verification {
@@ -102,6 +105,7 @@ model Request {
   // Relations
   participators RequestParticipator[]
   // ratings              Rating[]
+  chatRooms     ChatRoom[]
 
   @@unique([createdAt, id])
 }
@@ -223,6 +227,7 @@ model Offer {
   updatedAt         DateTime         @default(now()) @updatedAt @map("updated_at")
 
   interactions      OfferInteraction[]
+  chatRooms         ChatRoom[]
 
   @@unique([createdAt, id])
 }
@@ -428,4 +433,57 @@ enum NotificationType {
   help_request_nearby
   rating_received
   general
+  new_message
+}
+
+model ChatRoom {
+  id          String         @id @default(uuid())
+  type        ChatRoomType
+  status      ChatRoomStatus @default(active)
+
+  // Links to either an Offer or a Request (optional polymorphic FKs)
+  offerId     String?        @map("offer_id")
+  requestId   String?        @map("request_id")
+
+  offer       Offer?         @relation(fields: [offerId], references: [id], onDelete: Cascade)
+  request     Request?       @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  participants ChatParticipant[]
+  messages     Message[]
+
+  createdAt   DateTime       @default(now()) @map("created_at")
+  updatedAt   DateTime       @default(now()) @updatedAt @map("updated_at")
+}
+
+model ChatParticipant {
+  id       String   @id @default(uuid())
+  roomId   String   @map("room_id")
+  userId   String   @map("user_id")
+  joinedAt DateTime @default(now()) @map("joined_at")
+
+  room ChatRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  user User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([roomId, userId])
+}
+
+model Message {
+  id        String   @id @default(uuid())
+  roomId    String   @map("room_id")
+  senderId  String   @map("sender_id")
+  content   String   @db.Text
+  createdAt DateTime @default(now()) @map("created_at")
+
+  room   ChatRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  sender User     @relation(fields: [senderId], references: [id], onDelete: Cascade)
+}
+
+enum ChatRoomType {
+  group
+  direct
+}
+
+enum ChatRoomStatus {
+  active
+  closed
 }

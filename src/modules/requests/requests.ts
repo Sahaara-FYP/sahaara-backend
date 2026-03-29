@@ -13,6 +13,12 @@ import {
   sendDirectNotification,
   broadcastNotification,
 } from "../../services/notificationService.js";
+import {
+  closeAllRoomsForContext,
+  closeDirectRoomForInteraction,
+  createGroupRoom,
+  onInteractionAccepted,
+} from "../../utils/chatHelpers.js";
 
 export const requestsRouter = Router();
 
@@ -119,6 +125,11 @@ requestsRouter.post(
       });
 
       broadcast("requests_changed");
+
+      // Create a group ChatRoom for this request
+      createGroupRoom(userId, { requestId: newRequest.id }).catch((e) =>
+        console.error("createGroupRoom error:", e),
+      );
 
       // Smart Matching & Proximity Broadcast (Top 20 users within 10km radius)
       await smartMatchRequest(
@@ -901,6 +912,11 @@ requestsRouter.patch(
       });
       broadcast("requests_changed", { requestId: participator.requestId });
 
+      // Create direct room + add helper to group room
+      onInteractionAccepted(participator.request.userId, participator.userId, {
+        requestId: participator.requestId,
+      }).catch((e) => console.error("onInteractionAccepted error:", e));
+
       // Notify the helper that their participation was accepted
       await sendDirectNotification(
         participator.userId,
@@ -983,6 +999,13 @@ requestsRouter.patch(
         data: { status: "rejected" },
       });
       broadcast("requests_changed", { requestId: participator.requestId });
+
+      closeDirectRoomForInteraction(
+        participator.request.userId,
+        participator.userId,
+        { requestId: participator.requestId },
+      ).catch(console.error);
+
       return res.status(200).json({
         message: "Participator rejected successfully",
         participator: updatedParticipator,
@@ -1044,6 +1067,25 @@ requestsRouter.patch(
         data: { status: "completed" },
       });
       broadcast("requests_changed", { requestId });
+
+      closeAllRoomsForContext({ requestId }).catch((e) =>
+        console.error("closeAllRoomsForContext error:", e),
+      );
+
+      // Notify accepted participators so they can rate the owner
+      const acceptedParticipators = await prisma.requestParticipator.findMany({
+        where: { requestId, status: "accepted" },
+      });
+      for (const p of acceptedParticipators) {
+        await sendDirectNotification(
+          p.userId,
+          "Request Completed",
+          `The request "${request.title}" has been completed. Please rate the owner!`,
+          "request_completed", // Reusing the same concept as offer_fulfilled
+          { requestId },
+        );
+      }
+
       return res.status(200).json({
         message: "Request marked as completed successfully",
         request: updatedRequest,
@@ -1106,6 +1148,11 @@ requestsRouter.patch(
         data: { status: "cancelled" },
       });
       broadcast("requests_changed", { requestId });
+
+      closeAllRoomsForContext({ requestId }).catch((e) =>
+        console.error("closeAllRoomsForContext error:", e),
+      );
+
       return res.status(200).json({
         message: "Request cancelled successfully",
         request: updatedRequest,
@@ -1210,6 +1257,24 @@ requestsRouter.patch(
         return updatedParticipator;
       });
       broadcast("requests_changed", { requestId });
+
+      // Assume we need request userId to close the direct room:
+      // The participator record included the request from earlier lines
+      const participatorWithRequest =
+        await prisma.requestParticipator.findUnique({
+          where: { unique_request_user: { requestId, userId } },
+          include: { request: true },
+        });
+      if (participatorWithRequest) {
+        closeDirectRoomForInteraction(
+          participatorWithRequest.request.userId,
+          userId,
+          { requestId },
+        ).catch((e) =>
+          console.error("closeDirectRoomForInteraction error:", e),
+        );
+      }
+
       return res.status(200).json({
         message: "Participation Offer withdrawn",
         participator: result,
@@ -1366,13 +1431,26 @@ requestsRouter.get(
         ? { id: lastItem.id, createdAt: lastItem.createdAt.toISOString() }
         : null;
 
+      const requestIds = participations.map((p) => p.requestId);
+      const ratings = await prisma.rating.findMany({
+        where: {
+          fromId: userId,
+          requestId: { in: requestIds },
+        },
+        select: { requestId: true, toId: true },
+      });
+
       const requests = participations.map((p) => {
         const { passwordHash, ...safeUser } = p.request.user;
+        const hasRatedOwner = ratings.some(
+          (r) => r.requestId === p.requestId && r.toId === p.request.userId,
+        );
         return {
           ...p.request,
           user: safeUser,
           offerStatus: p.status,
           alreadyOffered: true,
+          hasRatedOwner,
         };
       });
       console.log("🚀 ~ requests:", requests);
@@ -1480,12 +1558,31 @@ requestsRouter.get(
         (p) => p.status === "accepted",
       ).length;
 
+      // --- Ratings check ---
+      const ratings = await prisma.rating.findMany({
+        where: { requestId },
+        select: { fromId: true, toId: true },
+      });
+
+      const hasRatedOwner = isOwnRequest
+        ? false
+        : ratings.some((r) => r.fromId === userId && r.toId === request.userId);
+
+      const participatorsWithRating = request.participators.map((p) => ({
+        ...p,
+        hasBeenRated: ratings.some(
+          (r) => r.fromId === request.userId && r.toId === p.userId,
+        ),
+      }));
+
       return res.status(200).json({
         ...request,
+        participators: participatorsWithRating,
         isOwnRequest,
         alreadyOffered,
         offerStatus,
         participantsCount,
+        hasRatedOwner,
       });
     } catch (error: any) {
       console.error("Fetch request by ID error:", error);

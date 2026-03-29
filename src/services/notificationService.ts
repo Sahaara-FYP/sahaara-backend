@@ -63,6 +63,7 @@ export async function broadcastNotification(
   lng: number,
   radiusKm: number,
   limit?: number,
+  excludeUserId?: string,
 ) {
   try {
     // 1. Fetch all users who have recently updated their location and have a push token
@@ -75,6 +76,7 @@ export async function broadcastNotification(
         lastLocationLat: { not: null },
         lastLocationLng: { not: null },
         pushToken: { not: null },
+        ...(excludeUserId ? { id: { not: excludeUserId } } : {}),
       },
       select: {
         id: true,
