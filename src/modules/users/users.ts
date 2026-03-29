@@ -631,13 +631,14 @@ usersRouter.get(
   verifyRole(["admin"]),
   async (req: Request, res: Response) => {
     try {
-      const { status, limit = "20", offset = "0" } = req.query;
+      const { status, userId, limit = "20", offset = "0" } = req.query;
 
       const limitNum = Math.max(1, Math.min(100, parseInt(limit as string, 10) || 20));
       const offsetNum = Math.max(0, parseInt(offset as string, 10) || 0);
 
       const where: any = {};
       if (status) where.status = status as string;
+      if (userId) where.userId = userId as string;
 
       const [verifications, totalCount] = await Promise.all([
         prisma.verification.findMany({
@@ -846,9 +847,15 @@ usersRouter.get(
             select: {
               requests: true,
               offers: true,
+              alerts: true,
               reportsMade: true,
               reportsReceived: true,
             },
+          },
+          verifications: {
+            orderBy: { createdAt: "desc" },
+            take: 1,
+            select: { id: true, status: true },
           },
         },
       });
@@ -921,24 +928,59 @@ usersRouter.patch(
         return res.status(400).json({ error: "No valid fields provided to update" });
       }
 
-      const updatedUser = await prisma.user.update({
-        where: { id },
-        data: updateData,
-        include: {
-          _count: {
-            select: {
-              requests: true,
-              offers: true,
-              reportsMade: true,
-              reportsReceived: true,
+      const result = await prisma.$transaction(async (tx) => {
+        const updatedUser = await tx.user.update({
+          where: { id },
+          data: updateData,
+          include: {
+            _count: {
+              select: {
+                requests: true,
+                offers: true,
+                alerts: true,
+                reportsMade: true,
+                reportsReceived: true,
+              },
+            },
+            verifications: {
+              orderBy: { createdAt: "desc" },
+              take: 1,
+              select: { id: true, status: true },
             },
           },
-        },
+        });
+
+        // Sync verification status to the KYC table if modified
+        if (isVerified !== undefined) {
+          const newStatus = Boolean(isVerified) ? "verified" : "rejected";
+          const latestVerification = await tx.verification.findFirst({
+            where: { userId: id },
+            orderBy: { createdAt: "desc" },
+          });
+
+          if (latestVerification && latestVerification.status !== newStatus) {
+            await tx.verification.update({
+              where: { id: latestVerification.id },
+              data: {
+                status: newStatus,
+                verifiedAt: newStatus === "verified" ? new Date() : null,
+                adminNotes: `Status changed to ${newStatus} via Admin Users quick-toggle.`,
+              },
+            });
+            
+            // Reflect the synced status in the API response
+            if (updatedUser.verifications && updatedUser.verifications.length > 0) {
+              updatedUser.verifications[0].status = newStatus;
+            }
+          }
+        }
+
+        return updatedUser;
       });
 
       return res.status(200).json({
         message: "User updated successfully",
-        user: updatedUser,
+        user: result,
       });
     } catch (error) {
       console.error("Admin update user error:", error);

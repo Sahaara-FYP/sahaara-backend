@@ -588,13 +588,21 @@ requestsRouter.get(
         camelizedRequests.splice(0, camelizedRequests.length, ...items);
       }
 
-      // --- Attach signed URLs for attachments if present (async loop) ---
+      // --- Attach signed URLs for attachments and profile pictures if present (async loop) ---
       for (const request of camelizedRequests) {
         if (
           Array.isArray(request.attachments) &&
           request.attachments.length > 0
         ) {
           request.attachments = await createSignedUrls(request.attachments);
+        }
+
+        const reqUser = request.requester || request.user;
+        if (reqUser?.profilePictureUrl) {
+          const [signedPicUrl] = await createSignedUrls([reqUser.profilePictureUrl]);
+          if (signedPicUrl) {
+            reqUser.profilePictureUrl = signedPicUrl;
+          }
         }
       }
 

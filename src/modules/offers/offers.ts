@@ -510,10 +510,16 @@ offersRouter.get(
         camelizedOffers.splice(0, camelizedOffers.length, ...items);
       }
 
-      // Attach signed URLs for attachments
+      // Attach signed URLs for attachments and profile pictures
       for (const offer of camelizedOffers) {
         if (Array.isArray(offer.attachments) && offer.attachments.length > 0) {
           offer.attachments = await createSignedUrls(offer.attachments);
+        }
+        if (offer.volunteer?.profilePictureUrl) {
+          const [signedPicUrl] = await createSignedUrls([offer.volunteer.profilePictureUrl]);
+          if (signedPicUrl) {
+            offer.volunteer.profilePictureUrl = signedPicUrl;
+          }
         }
       }
 
