@@ -1431,13 +1431,26 @@ requestsRouter.get(
         ? { id: lastItem.id, createdAt: lastItem.createdAt.toISOString() }
         : null;
 
+      const requestIds = participations.map((p) => p.requestId);
+      const ratings = await prisma.rating.findMany({
+        where: {
+          fromId: userId,
+          requestId: { in: requestIds },
+        },
+        select: { requestId: true, toId: true },
+      });
+
       const requests = participations.map((p) => {
         const { passwordHash, ...safeUser } = p.request.user;
+        const hasRatedOwner = ratings.some(
+          (r) => r.requestId === p.requestId && r.toId === p.request.userId,
+        );
         return {
           ...p.request,
           user: safeUser,
           offerStatus: p.status,
           alreadyOffered: true,
+          hasRatedOwner,
         };
       });
       console.log("🚀 ~ requests:", requests);

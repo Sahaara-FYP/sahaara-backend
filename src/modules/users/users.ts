@@ -475,12 +475,21 @@ usersRouter.get(
         totalOffers,
         totalParticipations,
         totalAlerts,
+        activeRequests,
+        activeOffers,
         user,
       ] = await Promise.all([
         prisma.request.count({ where: { userId } }),
         prisma.offer.count({ where: { userId } }),
         prisma.requestParticipator.count({ where: { userId } }),
         prisma.alert.count({ where: { userId } }),
+        prisma.request.count({
+          where: {
+            userId,
+            status: { in: ["pending", "partially_accepted"] as any },
+          },
+        }),
+        prisma.offer.count({ where: { userId, status: "active" as any } }),
         prisma.user.findUnique({
           where: { id: userId },
           select: { averageRating: true, totalRatings: true },
@@ -494,6 +503,7 @@ usersRouter.get(
           totalOffers,
           totalParticipations,
           totalAlerts,
+          activePosts: activeRequests + activeOffers,
           averageRating: user?.averageRating || 0,
           totalRatings: user?.totalRatings || 0,
         },

@@ -299,8 +299,8 @@ offersRouter.get(
     WHEN EXISTS (
       SELECT 1 FROM "OfferInteraction" oi
       WHERE oi.offer_id = sub.id
-      AND oi.status = 'pending'::"InteractionStatus"
         AND oi.user_id = $${userIdParamIndex}
+        AND oi.status != 'cancelled'::"InteractionStatus"
     ) THEN true ELSE false END AS "alreadyInteracted",
 
   (
@@ -994,6 +994,12 @@ offersRouter.patch(
         where: { id: offerId },
         data: { status },
       });
+
+      if (status === "completed" || status === "cancelled") {
+        closeAllRoomsForContext({ offerId }).catch((e) =>
+          console.error("closeAllRoomsForContext error:", e),
+        );
+      }
 
       broadcast("offers_changed", { offerId });
 
