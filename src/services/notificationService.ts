@@ -141,23 +141,18 @@ export async function smartMatchRequest(
   limit: number = 20,
 ) {
   try {
+    const requester = await prisma.request.findUnique({
+      where: { id: requestId },
+      select: { userId: true },
+    });
+
     // 1. Fetch nearby users with relevant data for scoring
     const users = await prisma.user.findMany({
       where: {
         lastLocationLat: { not: null },
         lastLocationLng: { not: null },
         pushToken: { not: null },
-        id: {
-          not: {
-            // Don't notify the requester themselves
-            equals: (
-              await prisma.request.findUnique({
-                where: { id: requestId },
-                select: { userId: true },
-              })
-            )?.userId,
-          },
-        },
+        ...(requester?.userId ? { id: { not: requester.userId } } : {}),
       },
       select: {
         id: true,
@@ -172,7 +167,7 @@ export async function smartMatchRequest(
             requestParticipations: {
               where: {
                 request: { category: category as any },
-                status: "completed",
+                status: "accepted",
               },
             },
           },

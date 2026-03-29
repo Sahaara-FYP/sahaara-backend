@@ -1,0 +1,8 @@
+﻿src/modules/alerts/alerts.ts(107,9): error TS2345: Argument of type 'Decimal' is not assignable to parameter of type 'number'.
+src/services/notificationService.ts(151,11): error TS2322: Type '{ equals: string | undefined; }' is not assignable to type 'string | NestedStringFilter<"User"> | undefined'.
+  Type '{ equals: string | undefined; }' is not assignable to type 'NestedStringFilter<"User">' with 'exactOptionalPropertyTypes: true'. Consider adding 'undefined' to the types of the target's properties.
+    Types of property 'equals' are incompatible.
+      Type 'string | undefined' is not assignable to type 'string | FieldRef<"User", "String">'.
+        Type 'undefined' is not assignable to type 'string | FieldRef<"User", "String">'.
+src/services/notificationService.ts(175,17): error TS2322: Type '"completed"' is not assignable to type 'ParticipationStatus | EnumParticipationStatusFilter<"RequestParticipator"> | undefined'.
+src/services/notificationService.ts(211,32): error TS2339: Property '_count' does not exist on type '{ id: string; fullName: string; username: string | null; email: string; phoneNumber: string | null; address: string | null; passwordHash: string; gender: Gender | null; dateOfBirth: Date | null; ... 15 more ...; pushToken: string | null; }'.

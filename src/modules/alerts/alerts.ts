@@ -104,8 +104,8 @@ alertsRouter.post(
         newAlert.description || "A new alert has been posted in your area.",
         "alert_nearby", // Fixed type
         { alertId: newAlert.id },
-        newAlert.locationLat,
-        newAlert.locationLng,
+        Number(newAlert.locationLat),
+        Number(newAlert.locationLng),
         20, // 20km radius for alerts
       );
 

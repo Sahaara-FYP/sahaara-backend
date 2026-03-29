@@ -1,5 +1,6 @@
 import { Router, Request, Response } from "express";
 import { verifyAccessToken } from "../../middleware/verifyAccessToken.js";
+import { verifyRole } from "../../middleware/verifyRole.js";
 import {
   ReportEntityType,
   ReportReason,
@@ -37,15 +38,13 @@ reportsRouter.post(
         return res.status(400).json({ error: "Missing required fields" });
       }
 
-      // Validate Enums manually if needed, or rely on Prisma/TS
+      // Validate Enums
       if (!Object.keys(ReportEntityType).includes(entityType)) {
         return res.status(400).json({ error: "Invalid entity type" });
       }
       if (!Object.keys(ReportReason).includes(reason)) {
         return res.status(400).json({ error: "Invalid report reason" });
       }
-
-      // Prevent excessive reporting (simple rate limit logic could go here)
 
       // Create Report
       const report = await prisma.report.create({
@@ -77,37 +76,171 @@ reportsRouter.post(
  * @api {get} /reports List Reports (Admin)
  * @apiName ListReports
  * @apiGroup Reports
- * @apiPermission authenticated (admin)
+ * @apiPermission admin
+ *
+ * @apiQuery {String} [status] Filter by report status (pending, reviewed, resolved, dismissed).
+ * @apiQuery {String} [entityType] Filter by entity type (request, offer, alert, user).
+ * @apiQuery {String} [reason] Filter by reason.
+ * @apiQuery {Number} [limit=20] Number of results per page.
+ * @apiQuery {Number} [offset=0] Offset for pagination.
  */
 reportsRouter.get(
   "/",
   verifyAccessToken,
+  verifyRole(["admin"]),
   async (req: Request, res: Response) => {
     try {
-      // TODO: Add Admin Check middleware here
-      const { status, entityType, limit = "20", cursor } = req.query;
+      const {
+        status,
+        entityType,
+        reason,
+        limit = "20",
+        offset = "0",
+      } = req.query;
+
+      const limitNum = Math.max(1, Math.min(100, parseInt(limit as string, 10) || 20));
+      const offsetNum = Math.max(0, parseInt(offset as string, 10) || 0);
 
       const where: any = {};
       if (status) where.status = status as ReportStatus;
       if (entityType) where.entityType = entityType as ReportEntityType;
+      if (reason) where.reason = reason as ReportReason;
 
-      const reports = await prisma.report.findMany({
-        where,
-        include: {
-          reporter: {
-            select: { id: true, fullName: true, username: true, email: true },
+      const [reports, totalCount] = await Promise.all([
+        prisma.report.findMany({
+          where,
+          include: {
+            reporter: {
+              select: {
+                id: true,
+                fullName: true,
+                username: true,
+                email: true,
+                profilePictureUrl: true,
+              },
+            },
+            reportedUser: {
+              select: {
+                id: true,
+                fullName: true,
+                username: true,
+                email: true,
+                profilePictureUrl: true,
+                isActive: true,
+              },
+            },
           },
-          reportedUser: {
-            select: { id: true, fullName: true, username: true, email: true },
-          },
+          take: limitNum,
+          skip: offsetNum,
+          orderBy: { createdAt: "desc" },
+        }),
+        prisma.report.count({ where }),
+      ]);
+
+      const totalPages = Math.ceil(totalCount / limitNum);
+      const page = Math.floor(offsetNum / limitNum) + 1;
+
+      return res.status(200).json({
+        data: reports,
+        pagination: {
+          total: totalCount,
+          page,
+          limit: limitNum,
+          totalPages,
+          hasNextPage: page < totalPages,
+          hasPrevPage: page > 1,
         },
-        take: Number(limit),
-        orderBy: { createdAt: "desc" },
+        message: "Reports fetched successfully",
       });
-
-      return res.status(200).json({ data: reports });
     } catch (error) {
       console.error("List reports error:", error);
+      return res.status(500).json({ error: "Internal server error" });
+    }
+  },
+);
+
+/**
+ * @api {patch} /reports/:id/action Take Action on a Report (Admin)
+ * @apiName ActionReport
+ * @apiGroup Reports
+ * @apiPermission admin
+ *
+ * @apiParam {String} id Report ID.
+ * @apiBody {String="reviewed","resolved","dismissed"} status New status for the report.
+ * @apiBody {String} [adminNotes] Optional notes from admin.
+ * @apiBody {Boolean} [blockUser] If true, deactivates the reported user.
+ */
+reportsRouter.patch(
+  "/:id/action",
+  verifyAccessToken,
+  verifyRole(["admin"]),
+  async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const { status, adminNotes, blockUser } = req.body;
+
+      if (!id) {
+        return res.status(400).json({ error: "Report ID is required" });
+      }
+
+      if (status && !["reviewed", "resolved", "dismissed"].includes(status)) {
+        return res.status(400).json({ error: "Invalid status value" });
+      }
+
+      const report = await prisma.report.findUnique({ where: { id } });
+      if (!report) {
+        return res.status(404).json({ error: "Report not found" });
+      }
+
+      // Update report atomically using transaction
+      const result = await prisma.$transaction(async (tx) => {
+        const updatedReport = await tx.report.update({
+          where: { id },
+          data: {
+            ...(status && { status: status as ReportStatus }),
+            ...(adminNotes !== undefined && { adminNotes }),
+            ...(status === "resolved" || status === "dismissed"
+              ? { resolvedAt: new Date() }
+              : {}),
+          },
+          include: {
+            reporter: {
+              select: {
+                id: true,
+                fullName: true,
+                username: true,
+                email: true,
+              },
+            },
+            reportedUser: {
+              select: {
+                id: true,
+                fullName: true,
+                username: true,
+                email: true,
+                isActive: true,
+              },
+            },
+          },
+        });
+
+        // Optionally block (deactivate) the reported user
+        if (blockUser && report.reportedUserId) {
+          await tx.user.update({
+            where: { id: report.reportedUserId },
+            data: { isActive: false },
+          });
+        }
+
+        return updatedReport;
+      });
+
+      return res.status(200).json({
+        message: "Report action completed successfully",
+        report: result,
+      });
+    } catch (error) {
+      console.error("Report action error:", error);
       return res.status(500).json({ error: "Internal server error" });
     }
   },

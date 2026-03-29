@@ -600,3 +600,339 @@ usersRouter.patch(
     }
   },
 );
+
+// ============================
+// ADMIN: KYC VERIFICATION MANAGEMENT
+// ============================
+
+/**
+ * @api {get} /users/admin/verifications List KYC Verifications (Admin)
+ * @apiName AdminListVerifications
+ * @apiGroup Users
+ * @apiPermission admin
+ *
+ * @apiQuery {String} [status] Filter by verification status (pending, verified, rejected).
+ * @apiQuery {Number} [limit=20] Number of results per page.
+ * @apiQuery {Number} [offset=0] Offset for pagination.
+ */
+usersRouter.get(
+  "/admin/verifications",
+  verifyAccessToken,
+  verifyRole(["admin"]),
+  async (req: Request, res: Response) => {
+    try {
+      const { status, limit = "20", offset = "0" } = req.query;
+
+      const limitNum = Math.max(1, Math.min(100, parseInt(limit as string, 10) || 20));
+      const offsetNum = Math.max(0, parseInt(offset as string, 10) || 0);
+
+      const where: any = {};
+      if (status) where.status = status as string;
+
+      const [verifications, totalCount] = await Promise.all([
+        prisma.verification.findMany({
+          where,
+          include: {
+            user: {
+              select: {
+                id: true,
+                fullName: true,
+                username: true,
+                email: true,
+                phoneNumber: true,
+                cnicNumber: true,
+                gender: true,
+                dateOfBirth: true,
+                profilePictureUrl: true,
+                isVerified: true,
+                isActive: true,
+                createdAt: true,
+              },
+            },
+          },
+          take: limitNum,
+          skip: offsetNum,
+          orderBy: { createdAt: "desc" },
+        }),
+        prisma.verification.count({ where }),
+      ]);
+
+      // Resolve signed URLs for KYC images and profile pictures
+      for (const v of verifications) {
+        const pathsToSign: string[] = [];
+        if (v.cnicFrontUrl) pathsToSign.push(v.cnicFrontUrl);
+        if (v.cnicBackUrl) pathsToSign.push(v.cnicBackUrl);
+        if (v.selfieWithCnicUrl) pathsToSign.push(v.selfieWithCnicUrl);
+        if (v.user.profilePictureUrl) pathsToSign.push(v.user.profilePictureUrl);
+
+        const signedUrls = await createSignedUrls(pathsToSign);
+        let idx = 0;
+        if (v.cnicFrontUrl) { (v as any).cnicFrontUrl = signedUrls[idx++]; }
+        if (v.cnicBackUrl) { (v as any).cnicBackUrl = signedUrls[idx++]; }
+        if (v.selfieWithCnicUrl) { (v as any).selfieWithCnicUrl = signedUrls[idx++]; }
+        if (v.user.profilePictureUrl) { (v.user as any).profilePictureUrl = signedUrls[idx++]; }
+      }
+
+      const totalPages = Math.ceil(totalCount / limitNum);
+      const page = Math.floor(offsetNum / limitNum) + 1;
+
+      return res.status(200).json({
+        data: verifications,
+        pagination: {
+          total: totalCount,
+          page,
+          limit: limitNum,
+          totalPages,
+          hasNextPage: page < totalPages,
+          hasPrevPage: page > 1,
+        },
+        message: "Verifications fetched successfully",
+      });
+    } catch (error) {
+      console.error("Admin list verifications error:", error);
+      return res.status(500).json({ error: "Internal server error" });
+    }
+  },
+);
+
+/**
+ * @api {patch} /users/admin/verifications/:id/status Update KYC Verification Status (Admin)
+ * @apiName AdminUpdateVerificationStatus
+ * @apiGroup Users
+ * @apiPermission admin
+ *
+ * @apiParam {String} id Verification ID.
+ * @apiBody {String="verified","rejected"} status New status.
+ * @apiBody {String} [adminNotes] Optional notes from admin.
+ */
+usersRouter.patch(
+  "/admin/verifications/:id/status",
+  verifyAccessToken,
+  verifyRole(["admin"]),
+  async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const { status, adminNotes } = req.body;
+
+      if (!id) {
+        return res.status(400).json({ error: "Verification ID is required" });
+      }
+
+      if (!status || !["verified", "rejected"].includes(status)) {
+        return res
+          .status(400)
+          .json({ error: "Valid status (verified or rejected) is required" });
+      }
+
+      const verification = await prisma.verification.findUnique({
+        where: { id },
+      });
+      if (!verification) {
+        return res.status(404).json({ error: "Verification not found" });
+      }
+
+      const result = await prisma.$transaction(async (tx) => {
+        const updatedVerification = await tx.verification.update({
+          where: { id },
+          data: {
+            status,
+            adminNotes: adminNotes || null,
+            verifiedAt: status === "verified" ? new Date() : null,
+          },
+          include: {
+            user: {
+              select: {
+                id: true,
+                fullName: true,
+                username: true,
+                email: true,
+                isVerified: true,
+              },
+            },
+          },
+        });
+
+        // Update user's isVerified status on the User model
+        await tx.user.update({
+          where: { id: verification.userId },
+          data: { isVerified: status === "verified" },
+        });
+
+        return updatedVerification;
+      });
+
+      return res.status(200).json({
+        message: `Verification ${status} successfully`,
+        verification: result,
+      });
+    } catch (error) {
+      console.error("Admin update verification error:", error);
+      return res.status(500).json({ error: "Internal server error" });
+    }
+  },
+);
+
+/**
+ * @api {get} /users/admin/users Admin List Users
+ * @apiName AdminListUsers
+ * @apiGroup Users
+ * @apiPermission admin
+ *
+ * @apiQuery {Number} [limit=10] Items per page.
+ * @apiQuery {Number} [offset=0] Pagination offset.
+ * @apiQuery {String} [search] Search term (matches full_name, email, username, phone_number).
+ * @apiQuery {String} [role] Filter by role.
+ * @apiQuery {String} [isActive] Filter by active status (true/false).
+ * @apiQuery {String} [isVerified] Filter by verification status (true/false).
+ */
+usersRouter.get(
+  "/admin/users",
+  verifyAccessToken,
+  verifyRole(["admin"]),
+  async (req: Request, res: Response) => {
+    try {
+      const {
+        limit = "10",
+        offset = "0",
+        search,
+        role,
+        isActive,
+        isVerified,
+      } = req.query;
+
+      const itemsLimit = Math.max(1, parseInt(limit as string, 10) || 10);
+      const itemsOffset = Math.max(0, parseInt(offset as string, 10) || 0);
+
+      const where: any = {};
+
+      if (search) {
+        where.OR = [
+          { fullName: { contains: search as string, mode: "insensitive" } },
+          { email: { contains: search as string, mode: "insensitive" } },
+          { username: { contains: search as string, mode: "insensitive" } },
+          { phoneNumber: { contains: search as string, mode: "insensitive" } },
+        ];
+      }
+
+      if (role) {
+        where.role = role as string;
+      }
+
+      if (isActive !== undefined) {
+        where.isActive = isActive === "true";
+      }
+
+      if (isVerified !== undefined) {
+        where.isVerified = isVerified === "true";
+      }
+
+      const users = await prisma.user.findMany({
+        where,
+        take: itemsLimit,
+        skip: itemsOffset,
+        orderBy: { createdAt: "desc" },
+        include: {
+          _count: {
+            select: {
+              requests: true,
+              offers: true,
+              reportsMade: true,
+              reportsReceived: true,
+            },
+          },
+        },
+      });
+
+      const totalItems = await prisma.user.count({ where });
+
+      for (const user of users) {
+        if (user.profilePictureUrl) {
+          const [signedUrl] = await createSignedUrls([user.profilePictureUrl]);
+          if (signedUrl) {
+            user.profilePictureUrl = signedUrl;
+          }
+        }
+      }
+
+      return res.status(200).json({
+        data: users,
+        pagination: {
+          totalItems,
+          totalPages: Math.ceil(totalItems / itemsLimit),
+          currentPage: Math.floor(itemsOffset / itemsLimit) + 1,
+          itemsPerPage: itemsLimit,
+        },
+      });
+    } catch (error) {
+      console.error("Admin list users error:", error);
+      return res.status(500).json({ error: "Internal server error" });
+    }
+  }
+);
+
+/**
+ * @api {patch} /users/admin/users/:id Admin Update User
+ * @apiName AdminUpdateUser
+ * @apiGroup Users
+ * @apiPermission admin
+ *
+ * @apiParam {String} id User ID.
+ * @apiBody {Boolean} [isActive] Update active status.
+ * @apiBody {Boolean} [isVerified] Update verification status.
+ * @apiBody {String="admin","user"} [role] Update user role.
+ */
+usersRouter.patch(
+  "/admin/users/:id",
+  verifyAccessToken,
+  verifyRole(["admin"]),
+  async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const { isActive, isVerified, role } = req.body;
+
+      if (!id) {
+        return res.status(400).json({ error: "User ID is required" });
+      }
+
+      const user = await prisma.user.findUnique({
+        where: { id },
+      });
+
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      const updateData: any = {};
+      if (isActive !== undefined) updateData.isActive = Boolean(isActive);
+      if (isVerified !== undefined) updateData.isVerified = Boolean(isVerified);
+      if (role && ["admin", "user"].includes(role)) updateData.role = role;
+
+      if (Object.keys(updateData).length === 0) {
+        return res.status(400).json({ error: "No valid fields provided to update" });
+      }
+
+      const updatedUser = await prisma.user.update({
+        where: { id },
+        data: updateData,
+        include: {
+          _count: {
+            select: {
+              requests: true,
+              offers: true,
+              reportsMade: true,
+              reportsReceived: true,
+            },
+          },
+        },
+      });
+
+      return res.status(200).json({
+        message: "User updated successfully",
+        user: updatedUser,
+      });
+    } catch (error) {
+      console.error("Admin update user error:", error);
+      return res.status(500).json({ error: "Internal server error" });
+    }
+  }
+);

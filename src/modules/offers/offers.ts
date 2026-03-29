@@ -1,5 +1,6 @@
 import { type Request, type Response, Router } from "express";
 import { verifyAccessToken } from "../../middleware/verifyAccessToken.js";
+import { verifyRole } from "../../middleware/verifyRole.js";
 import prisma from "../../utils/prisma.js";
 import upload from "../../middleware/multer.js";
 import { Prisma } from "../../../generated/prisma/index.js";
@@ -940,6 +941,50 @@ offersRouter.patch(
     } catch (error) {
       console.error("Update offer status error:", error);
       return res.status(500).json({ error: "Internal server error" });
+    }
+  },
+);
+
+/**
+ * @api {patch} /offers/moderation-status Update Offer Moderation Status (Admin)
+ * @apiName UpdateOfferModerationStatus
+ * @apiGroup Offers
+ * @apiPermission admin
+ *
+ * @apiHeader {String} Authorization Bearer access token.
+ *
+ * @apiBody {String} offerId ID of the offer (required).
+ * @apiBody {String="clean","flagged","reviewed","blocked"} moderationStatus New moderation status (required).
+ *
+ */
+offersRouter.patch(
+  "/moderation-status",
+  verifyAccessToken,
+  verifyRole(["admin"]),
+  async (req: Request, res: Response) => {
+    try {
+      const { offerId, moderationStatus } = req.body || {};
+
+      if (!offerId || !moderationStatus) {
+        return res
+          .status(400)
+          .json({ error: "offerId and moderationStatus are required" });
+      }
+
+      const updatedOffer = await prisma.offer.update({
+        where: { id: offerId },
+        data: { moderationStatus },
+      });
+
+      broadcast("offers_changed", { offerId });
+
+      return res.status(200).json({
+        message: "Moderation status updated successfully",
+        offer: updatedOffer,
+      });
+    } catch (error: any) {
+      console.error("Error updating offer moderation status:", error);
+      return res.status(500).json({ error: "Internal Server Error" });
     }
   },
 );
