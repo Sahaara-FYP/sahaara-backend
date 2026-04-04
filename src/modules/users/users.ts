@@ -729,10 +729,10 @@ usersRouter.patch(
         return res.status(400).json({ error: "Verification ID is required" });
       }
 
-      if (!status || !["verified", "rejected"].includes(status)) {
+      if (!status || !["verified", "rejected", "pending"].includes(status)) {
         return res
           .status(400)
-          .json({ error: "Valid status (verified or rejected) is required" });
+          .json({ error: "Valid status (verified, rejected or pending) is required" });
       }
 
       const verification = await prisma.verification.findUnique({
@@ -764,6 +764,7 @@ usersRouter.patch(
         });
 
         // Update user's isVerified status on the User model
+        // isVerified is ONLY true if status is "verified"
         await tx.user.update({
           where: { id: verification.userId },
           data: { isVerified: status === "verified" },
@@ -952,7 +953,7 @@ usersRouter.patch(
 
         // Sync verification status to the KYC table if modified
         if (isVerified !== undefined) {
-          const newStatus = Boolean(isVerified) ? "verified" : "rejected";
+          const newStatus = Boolean(isVerified) ? "verified" : "pending";
           const latestVerification = await tx.verification.findFirst({
             where: { userId: id },
             orderBy: { createdAt: "desc" },
@@ -969,7 +970,7 @@ usersRouter.patch(
             });
             
             // Reflect the synced status in the API response
-            if (updatedUser.verifications && updatedUser.verifications.length > 0) {
+            if (updatedUser && updatedUser.verifications && updatedUser.verifications.length > 0) {
               updatedUser.verifications[0].status = newStatus;
             }
           }

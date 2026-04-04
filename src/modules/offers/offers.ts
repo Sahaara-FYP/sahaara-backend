@@ -1235,15 +1235,37 @@ offersRouter.get(
 
       const isOwnOffer = offer.userId === userId;
 
-      // Attach signed URLs for attachments
+      // 🖼 Attach signed URLs for offer attachments
       if (Array.isArray(offer.attachments) && offer.attachments.length > 0) {
         offer.attachments = await createSignedUrls(
           offer.attachments as string[],
         );
       }
 
+      // 🖼 Sign profile pictures for each interactor
+      if (offer.interactions?.length) {
+        for (const inter of offer.interactions) {
+          if (inter.user?.profilePictureUrl) {
+            const [signedUrl] = await createSignedUrls([inter.user.profilePictureUrl]);
+            if (signedUrl) {
+              inter.user.profilePictureUrl = signedUrl;
+            }
+          }
+        }
+      }
+
+      // 🔄 Rename 'user' to 'volunteer' for consistency with list view
+      const { user, ...offerData } = offer as any;
+      const volunteer = user;
+      if (volunteer?.profile_picture_url || volunteer?.profilePictureUrl) {
+        const picUrl = volunteer.profilePictureUrl || volunteer.profile_picture_url;
+        const [signedPicUrl] = await createSignedUrls([picUrl]);
+        volunteer.profilePictureUrl = signedPicUrl;
+      }
+
       return res.status(200).json({
-        ...offer,
+        ...offerData,
+        volunteer,
         isOwnOffer,
       });
     } catch (error) {
