@@ -1,0 +1,174 @@
+PROJECT REPORT: SOFTWARE RE-ENGINEERING OF SAHAARA BACKEND
+
+Student Name: [Insert Name]
+Student ID: [Insert ID]
+Date: April 28, 2026
+
+-------------------------------------------------------------------------------
+1. INTRODUCTION AND SYSTEM OVERVIEW
+-------------------------------------------------------------------------------
+
+Sahaara is a smart, real-time backend built for hyperlocal community support. The system works as a digital connection within neighborhoods, letting residents post help requests for medical aid, food, or safety. Nearby members can respond with resources or specific physical services. The backend manages real-time location matching, trust-based rating systems, and secure identity verification to maintain a reliable community environment.
+
+-------------------------------------------------------------------------------
+2. REVERSE ENGINEERING ANALYSIS
+-------------------------------------------------------------------------------
+
+2.1 Folder Structure
+The repository uses a module-based structure where features are grouped but lack strict layer separation.
+
+sahaara-backend/
+├── prisma/                  (Database schema and migration logs)
+├── src/
+│   ├── index.ts             (Server entry point and middleware assembly)
+│   ├── middleware/          (Security and preprocessing filters)
+│   ├── modules/             (Primary feature implementations)
+│   │   ├── alerts           (Notification and broadcast logic)
+│   │   ├── auth             (Identity and session management)
+│   │   ├── requests         (Core help-request engine)
+│   │   └── chat             (Real-time communication logic)
+│   ├── services/            (Background tasks and utilities)
+│   └── utils/               (Shared helper functions)
+
+2.2 Dependency Audit
+- Express (v5.1): Web routing framework.
+- Prisma: Object-Relational Mapper (ORM) for bridging logic with PostgreSQL.
+- Zod: Used for basic schema validation in select parts of the app.
+- ws (WebSockets): Handles low-latency message broadcasting for community support.
+
+-------------------------------------------------------------------------------
+3. METRICS AND COMPLEXITY AUDIT
+-------------------------------------------------------------------------------
+
+3.1 Quantitative Code Volume
+The core logic of Sahaara is located in three main modules. The volume indicates a heavy concentration of logic in the requests engine.
+
+Module | File Path | Lines of Code (LOC)
+Requests | src/modules/requests/requests.ts | 1675
+Alerts | src/modules/alerts/alerts.ts | 1076
+Auth | src/modules/auth/auth.ts | 199
+Total Core | - | 2950
+
+3.2 Cyclomatic Complexity Analysis
+The most complex function is the GET / route in src/modules/requests/requests.ts (Lines 181 to 619).
+
+- Quantitative Complexity: This single route handler contains over 18 explicit branching paths, multiple loops for URL signing, and nested database transactions.
+- Risk Assessment: The high branch density increases cognitive load for engineers. This makes it difficult to trace every logical path during a manual audit and increases the chance of errors during updates.
+
+-------------------------------------------------------------------------------
+4. DIAGRAM LOGIC (UML AND DFD)
+-------------------------------------------------------------------------------
+
+4.1 Use Cases
+Actor: User
+Actions: Register, Login, Post Help Request, Offer Service, Join Chat Room, Acknowledge Alert, Report Entity.
+
+Actor: Admin
+Actions: Verify Identity Documents, Ban User, View Analytics.
+
+Actor: Moderator
+Actions: Flag Content, Review Reports.
+
+4.2 DFD Level 0 (External Context)
+- Entities: Mobile Client, System Admin Dashboard, Supabase Storage.
+- Inputs: User GPS data, Request Metadata, Identity Documents.
+- Outputs: Proximity Match Notifications, Validated Auth Tokens, Signed Image URLs.
+
+4.3 DFD Level 1 (Internal Processes)
+1. Request Validation: Sanitizes raw JSON from the mobile client.
+2. Identity Verification: Cross-references ID uploads with the user profile.
+3. Spatial Filtering: Executes Haversine calculations to find nearby help opportunities.
+4. Broadcast Logic: Pushes real-time alerts to connected WebSocket clients.
+
+-------------------------------------------------------------------------------
+5. SYSTEM WEAKNESS IDENTIFICATION
+-------------------------------------------------------------------------------
+
+5.1 Architectural Coupling
+Location: src/modules/requests/requests.ts
+The business logic is mixed within the Express route handlers. Database transactions and matching algorithms are combined with HTTP response logic. This prevents testing the matching engine by itself.
+
+5.2 Inconsistent Validation
+Location: src/modules/alerts/alerts.ts (Line 45)
+Input checking is done manually using basic "if" statements. This is brittle. If a check is missed for one field, it can cause errors in the database layer.
+
+5.3 Standard Error Handling Issues
+Location: Project-wide
+Errors are handled via generic catch blocks that return a 500 status code with a standard message. This hides system diagnostics and makes debugging harder for frontend developers.
+
+5.4 Database Dependency (Raw SQL)
+Location: src/modules/requests/requests.ts (Line 326)
+The system uses raw SQL strings for geographic distance calculations. This creates a hard dependency on Postgres syntax, which makes database migration or scaling more difficult.
+
+-------------------------------------------------------------------------------
+6. RE-ENGINEERING PROPOSAL
+-------------------------------------------------------------------------------
+
+6.1 Architectural Transformation: Service-Repository Pattern
+The proposal is a shift to a three-tier architecture:
+1. Controller Layer: Handles HTTP parsing and status codes only.
+2. Service Layer: Contains the pure business logic and algorithms.
+3. Repository Layer: Manages database calls and removes raw SQL from the logic.
+
+6.2 Technical Transformation Snippets
+
+Example A: Validation Modernization
+Current (Manual Checks in alerts.ts):
+if (!title) {
+  return res.status(400).json({ error: "Title is required" });
+}
+if (!locationLat || !locationLng) {
+  return res.status(400).json({ error: "Location is required" });
+}
+
+Improved (Schema-Based Validation via Zod):
+const AlertSchema = z.object({
+  title: z.string().min(1),
+  locationLat: z.number(),
+  locationLng: z.number(),
+});
+const validated = AlertSchema.parse(req.body);
+
+Example B: Architectural Decoupling
+Current (Logic in Controller):
+requestsRouter.post("/", async (req, res) => {
+  const request = await prisma.request.create({ data: req.body });
+  await smartMatchRequest(request.id);
+  res.status(201).json(request);
+});
+
+Improved (Service Layer Delegation):
+requestsRouter.post("/", async (req, res) => {
+  const newRequest = await RequestService.createNewHelp(req.userId, req.body);
+  return res.status(201).json(newRequest);
+});
+
+-------------------------------------------------------------------------------
+7. TRACEABILITY MATRIX
+-------------------------------------------------------------------------------
+
+Weakness: Architectural Coupling
+Re-Engineering Solution: Service-Repository Pattern
+Impact: Logic becomes testable on its own.
+
+Weakness: Inconsistent Validation
+Re-Engineering Solution: Zod Schema Middleware
+Impact: Full type-safety for all API inputs.
+
+Weakness: Error Inconsistency
+Re-Engineering Solution: Global Error Handler Middleware
+Impact: Standardized API responses across the app.
+
+Weakness: Raw SQL Dependency
+Re-Engineering Solution: Repository Abstraction Layer
+Impact: Decouples logic from the database type.
+
+-------------------------------------------------------------------------------
+8. CONCLUSION
+-------------------------------------------------------------------------------
+
+The Sahaara backend is a functionally rich platform currently using a "Fat Route" architecture with high cognitive complexity. By moving to the Service-Repository pattern and standardizing validation, the system will achieve the modularity needed to transition from a prototype to a production-grade community engine.
+
+-------------------------------------------------------------------------------
+END OF REPORT
+-------------------------------------------------------------------------------

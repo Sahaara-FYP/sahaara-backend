@@ -1068,8 +1068,3 @@ alertsRouter.get(
     }
   },
 );
-
-/**
- * @api {patch} /alerts Update an Alert
- * ...
- */

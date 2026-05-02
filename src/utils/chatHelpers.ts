@@ -12,8 +12,8 @@ export async function createGroupRoom(
     data: {
       type: "group",
       status: "active",
-      ...(context.offerId && { offerId: context.offerId }),
-      ...(context.requestId && { requestId: context.requestId }),
+      ...(context.offerId ? { offerId: context.offerId } : {}),
+      ...(context.requestId ? { requestId: context.requestId } : {}),
       participants: {
         create: { userId: ownerId },
       },
@@ -37,8 +37,8 @@ export async function onInteractionAccepted(
     where: {
       type: "group",
       status: "active",
-      ...(context.offerId && { offerId: context.offerId }),
-      ...(context.requestId && { requestId: context.requestId }),
+      ...(context.offerId ? { offerId: context.offerId } : {}),
+      ...(context.requestId ? { requestId: context.requestId } : {}),
     },
   });
 
@@ -48,8 +48,8 @@ export async function onInteractionAccepted(
       data: {
         type: "direct",
         status: "active",
-        ...(context.offerId && { offerId: context.offerId }),
-        ...(context.requestId && { requestId: context.requestId }),
+        ...(context.offerId ? { offerId: context.offerId } : {}),
+        ...(context.requestId ? { requestId: context.requestId } : {}),
         participants: {
           createMany: {
             data: [{ userId: ownerId }, { userId: requesterId }],
@@ -81,8 +81,8 @@ export async function closeAllRoomsForContext(context: {
   await prisma.chatRoom.updateMany({
     where: {
       status: "active",
-      ...(context.offerId && { offerId: context.offerId }),
-      ...(context.requestId && { requestId: context.requestId }),
+      ...(context.offerId ? { offerId: context.offerId } : {}),
+      ...(context.requestId ? { requestId: context.requestId } : {}),
     },
     data: { status: "closed" },
   });
@@ -102,9 +102,8 @@ export async function closeDirectRoomForInteraction(
     where: {
       type: "direct",
       status: "active",
-      ...(context.offerId
-        ? { offerId: context.offerId }
-        : { requestId: context.requestId }),
+      ...(context.offerId ? { offerId: context.offerId } : {}),
+      ...(context.requestId ? { requestId: context.requestId } : {}),
       participants: { some: { userId: ownerId } },
     },
     include: { participants: true },
@@ -126,9 +125,8 @@ export async function closeDirectRoomForInteraction(
     where: {
       type: "group",
       status: "active",
-      ...(context.offerId
-        ? { offerId: context.offerId }
-        : { requestId: context.requestId }),
+      ...(context.offerId ? { offerId: context.offerId } : {}),
+      ...(context.requestId ? { requestId: context.requestId } : {}),
     },
   });
 

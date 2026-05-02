@@ -633,7 +633,10 @@ usersRouter.get(
     try {
       const { status, userId, limit = "20", offset = "0" } = req.query;
 
-      const limitNum = Math.max(1, Math.min(100, parseInt(limit as string, 10) || 20));
+      const limitNum = Math.max(
+        1,
+        Math.min(100, parseInt(limit as string, 10) || 20),
+      );
       const offsetNum = Math.max(0, parseInt(offset as string, 10) || 0);
 
       const where: any = {};
@@ -674,14 +677,23 @@ usersRouter.get(
         if (v.cnicFrontUrl) pathsToSign.push(v.cnicFrontUrl);
         if (v.cnicBackUrl) pathsToSign.push(v.cnicBackUrl);
         if (v.selfieWithCnicUrl) pathsToSign.push(v.selfieWithCnicUrl);
-        if (v.user.profilePictureUrl) pathsToSign.push(v.user.profilePictureUrl);
+        if (v.user.profilePictureUrl)
+          pathsToSign.push(v.user.profilePictureUrl);
 
         const signedUrls = await createSignedUrls(pathsToSign);
         let idx = 0;
-        if (v.cnicFrontUrl) { (v as any).cnicFrontUrl = signedUrls[idx++]; }
-        if (v.cnicBackUrl) { (v as any).cnicBackUrl = signedUrls[idx++]; }
-        if (v.selfieWithCnicUrl) { (v as any).selfieWithCnicUrl = signedUrls[idx++]; }
-        if (v.user.profilePictureUrl) { (v.user as any).profilePictureUrl = signedUrls[idx++]; }
+        if (v.cnicFrontUrl) {
+          (v as any).cnicFrontUrl = signedUrls[idx++];
+        }
+        if (v.cnicBackUrl) {
+          (v as any).cnicBackUrl = signedUrls[idx++];
+        }
+        if (v.selfieWithCnicUrl) {
+          (v as any).selfieWithCnicUrl = signedUrls[idx++];
+        }
+        if (v.user.profilePictureUrl) {
+          (v.user as any).profilePictureUrl = signedUrls[idx++];
+        }
       }
 
       const totalPages = Math.ceil(totalCount / limitNum);
@@ -730,9 +742,9 @@ usersRouter.patch(
       }
 
       if (!status || !["verified", "rejected", "pending"].includes(status)) {
-        return res
-          .status(400)
-          .json({ error: "Valid status (verified, rejected or pending) is required" });
+        return res.status(400).json({
+          error: "Valid status (verified, rejected or pending) is required",
+        });
       }
 
       const verification = await prisma.verification.findUnique({
@@ -885,7 +897,7 @@ usersRouter.get(
       console.error("Admin list users error:", error);
       return res.status(500).json({ error: "Internal server error" });
     }
-  }
+  },
 );
 
 /**
@@ -926,7 +938,9 @@ usersRouter.patch(
       if (role && ["admin", "user"].includes(role)) updateData.role = role;
 
       if (Object.keys(updateData).length === 0) {
-        return res.status(400).json({ error: "No valid fields provided to update" });
+        return res
+          .status(400)
+          .json({ error: "No valid fields provided to update" });
       }
 
       const result = await prisma.$transaction(async (tx) => {
@@ -968,10 +982,11 @@ usersRouter.patch(
                 adminNotes: `Status changed to ${newStatus} via Admin Users quick-toggle.`,
               },
             });
-            
+
             // Reflect the synced status in the API response
-            if (updatedUser && updatedUser.verifications && updatedUser.verifications.length > 0) {
-              updatedUser.verifications[0].status = newStatus;
+            const firstVerification = updatedUser?.verifications?.[0];
+            if (firstVerification) {
+              firstVerification.status = newStatus;
             }
           }
         }
@@ -987,5 +1002,5 @@ usersRouter.patch(
       console.error("Admin update user error:", error);
       return res.status(500).json({ error: "Internal server error" });
     }
-  }
+  },
 );
