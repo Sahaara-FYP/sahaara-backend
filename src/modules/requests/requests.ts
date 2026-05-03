@@ -135,7 +135,7 @@ requestsRouter.post(
       await smartMatchRequest(
         newRequest.id,
         "New Help Request Nearby",
-        `${newRequest.title} needs your help!`,
+        `${newRequest.title}`,
         newRequest.category,
         newRequest.locationLat,
         newRequest.locationLng,
@@ -599,7 +599,9 @@ requestsRouter.get(
 
         const reqUser = request.requester || request.user;
         if (reqUser?.profilePictureUrl) {
-          const [signedPicUrl] = await createSignedUrls([reqUser.profilePictureUrl]);
+          const [signedPicUrl] = await createSignedUrls([
+            reqUser.profilePictureUrl,
+          ]);
           if (signedPicUrl) {
             reqUser.profilePictureUrl = signedPicUrl;
           }
@@ -813,6 +815,22 @@ requestsRouter.post(
         });
       }
       broadcast("requests_changed", { requestId });
+
+      // Notify the request owner
+      const participatorUser = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { fullName: true },
+      });
+
+      if (participatorUser) {
+        await sendDirectNotification(
+          request.userId,
+          "New Help Offer",
+          `${participatorUser.fullName} has offered to help with your request: ${request.title}`,
+          "general",
+          { requestId, participatorId: userId },
+        );
+      }
 
       return res.status(201).json({
         message: "Help Participation offered successfully",
