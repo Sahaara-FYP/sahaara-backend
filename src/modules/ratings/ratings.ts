@@ -73,17 +73,17 @@ ratingsRouter.post(
         });
 
         // Recalculate average rating
-        const { _avg, _count } = await tx.rating.aggregate({
+        const stats = await tx.rating.aggregate({
           where: { toId },
           _avg: { score: true },
-          _count: { score: true },
+          _count: { _all: true },
         });
 
         await tx.user.update({
           where: { id: toId },
           data: {
-            averageRating: _avg.score || 0,
-            totalRatings: _count.score || 0,
+            averageRating: stats._avg?.score || 0,
+            totalRatings: stats._count?._all || 0,
           },
         });
 
