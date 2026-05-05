@@ -22,6 +22,10 @@ import prisma from "./utils/prisma.js";
 import http from "http";
 import { WebSocketServer } from "ws";
 import { broadcast, initWebsocket } from "./utils/ws.js";
+// Re-Engineering Fix — Weakness 5.3 (Standard Error Handling Issues):
+// A single centralised error handler replaces the per-route generic catch
+// blocks that previously returned res.status(500).json({ error: "Internal server error" }).
+import { errorHandler } from "./middleware/errorHandler.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -66,6 +70,24 @@ app.use("/api/notifications", notificationsRouter);
 app.use("/api/chat", chatRouter);
 
 app.use("/api/docs", express.static(path.join(__dirname, "../apidoc")));
+
+// -----------------------------------------------------------------
+// Re-Engineering Fix — Weakness 5.3 (Standard Error Handling Issues)
+//
+// Before: Every route had its own catch block:
+//   catch (error) {
+//     console.error("...", error);
+//     return res.status(500).json({ error: "Internal server error" });
+//   }
+// This hid diagnostics and produced identical generic responses for
+// every failure type (validation failure looked the same as a DB crash).
+//
+// After: The global errorHandler is registered once, here, AFTER all
+// routes.  Routes call next(error) instead of responding inline.
+// The handler distinguishes: ZodError → 400, AppError → specific code,
+// unknown → 500 (with stack trace in development only).
+// -----------------------------------------------------------------
+app.use(errorHandler);
 
 const server = http.createServer(app);
 

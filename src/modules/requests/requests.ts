@@ -1,4 +1,24 @@
-import { type Request, type Response, Router } from "express";
+/**
+ * Re-Engineering: requests.ts
+ *
+ * Weakness fixed: 5.1 — Architectural Coupling
+ * Before: The POST "/" handler was a 110-line "fat controller" that mixed
+ * HTTP parsing, Prisma transactions, Supabase uploads, WebSocket broadcasts,
+ * group room creation, and smart-matching into a single route callback.
+ * This made it impossible to test any part of the logic in isolation.
+ *
+ * After: The controller is a thin HTTP adapter — it only:
+ *   1. Parses + validates req.body via CreateRequestSchema (Zod).
+ *   2. Delegates to RequestService.createNewHelp() with a typed input object.
+ *   3. Maps the result to an HTTP response.
+ * All business logic lives in requests.service.ts; all DB calls in requests.repository.ts.
+ */
+import {
+  type Request,
+  type Response,
+  type NextFunction,
+  Router,
+} from "express";
 import { verifyAccessToken } from "../../middleware/verifyAccessToken.js";
 import supabase from "../../utils/supabase.js";
 import prisma from "../../utils/prisma.js";
@@ -19,6 +39,8 @@ import {
   createGroupRoom,
   onInteractionAccepted,
 } from "../../utils/chatHelpers.js";
+import { RequestService } from "./requests.service.js";
+import { CreateRequestSchema } from "./requests.schemas.js";
 
 export const requestsRouter = Router();
 
@@ -46,110 +68,46 @@ requestsRouter.post(
   "/",
   verifyAccessToken,
   upload.array("attachments"),
-  async (req: Request, res: Response) => {
-    const {
-      title,
-      description,
-      category,
-      urgencyLevel,
-      locationLat,
-      locationLng,
-      postAnonymously,
-      visibilityVerifiedOnly,
-      visibilityWomenOnly,
-      maxHelpers,
-    } = req.body || {};
-
-    if (!title) {
-      return res.status(400).json({ error: "Title is required" });
-    }
-    if (!locationLat || !locationLng) {
-      return res.status(400).json({ error: "Location is required" });
-    }
-
-    const userId = req.userId!;
-
+  async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const newRequest = await prisma.$transaction(async (tx) => {
-        let request = await tx.request.create({
-          data: {
-            userId,
-            title,
-            description,
-            category,
-            urgencyLevel,
-            locationLat: parseFloat(locationLat),
-            locationLng: parseFloat(locationLng),
-            postAnonymously,
-            visibilityVerifiedOnly,
-            visibilityWomenOnly,
-            maxHelpers,
-            expiresAt: new Date(
-              Date.now() +
-                (urgencyLevel === "high" ? 2 : 7) * 24 * 60 * 60 * 1000,
-            ),
-            attachments: [],
-          },
-        });
+      // -----------------------------------------------------------------
+      // BEFORE re-engineering (Weakness 5.1 — Architectural Coupling):
+      //   All logic below lived directly here — DB transaction, file
+      //   upload loop, WebSocket broadcast, group-room creation, and
+      //   smart-match call — 110 lines in a single route handler.
+      //
+      // AFTER re-engineering:
+      //   The controller’s only job is to validate input and hand off to
+      //   the Service Layer.  Everything else is in requests.service.ts.
+      // -----------------------------------------------------------------
 
-        const attachments: string[] = [];
+      // Step 1: Validate input with Zod (also fixes Weakness 5.2)
+      const body = CreateRequestSchema.parse(req.body);
 
-        if (req.files && Array.isArray(req.files)) {
-          for (const file of req.files as Express.Multer.File[]) {
-            const safeName = file.originalname.replace(/\s+/g, "_");
-            const filePath = `requests/${request.id}/${Date.now()}_${safeName}`;
-
-            const { data, error } = await supabase.storage
-              .from("attachments")
-              .upload(filePath, file.buffer, {
-                cacheControl: "3600",
-                upsert: false,
-              });
-
-            if (error) {
-              console.error("Supabase upload error:", error);
-              continue;
-            }
-            attachments.push(data.path);
-          }
-        }
-
-        if (attachments.length > 0) {
-          request = await tx.request.update({
-            where: { id: request.id },
-            data: { attachments: attachments as Prisma.InputJsonValue },
-          });
-        }
-
-        return request;
+      // Step 2: Delegate all business logic to the Service Layer
+      const newRequest = await RequestService.createNewHelp({
+        userId: req.userId!,
+        title: body.title,
+        description: body.description,
+        category: body.category,
+        urgencyLevel: body.urgencyLevel,
+        locationLat: body.locationLat,
+        locationLng: body.locationLng,
+        postAnonymously: body.postAnonymously,
+        visibilityVerifiedOnly: body.visibilityVerifiedOnly,
+        visibilityWomenOnly: body.visibilityWomenOnly,
+        maxHelpers: body.maxHelpers,
+        files: req.files as Express.Multer.File[],
       });
 
-      broadcast("requests_changed");
-
-      // Create a group ChatRoom for this request
-      createGroupRoom(userId, { requestId: newRequest.id }).catch((e) =>
-        console.error("createGroupRoom error:", e),
-      );
-
-      // Smart Matching & Proximity Broadcast (Top 20 users within 10km radius)
-      await smartMatchRequest(
-        newRequest.id,
-        "New Help Request Nearby",
-        `${newRequest.title}`,
-        newRequest.category,
-        newRequest.locationLat,
-        newRequest.locationLng,
-        10, // 10km radius
-        20, // Limit to Top 20 for quality matching
-      );
-
+      // Step 3: Return HTTP response (the controller’s only remaining concern)
       return res.status(201).json({
         message: "Request created successfully",
         request: newRequest,
       });
     } catch (error) {
-      console.error("Create request error:", error);
-      return res.status(500).json({ error: "Internal server error" });
+      // Forward to global errorHandler (ZodError → 400, AppError → specific, else 500)
+      next(error);
     }
   },
 );

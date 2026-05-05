@@ -1,4 +1,18 @@
-import { type Request, type Response, Router } from "express";
+/**
+ * Re-Engineering: alerts.ts
+ *
+ * Weakness fixed: 5.2 — Inconsistent Validation
+ * Before: manual "if (!title)" and "if (!locationLat || !locationLng)" guards.
+ * After:  CreateAlertSchema (Zod) validates the entire POST body in one call.
+ *         Failures throw a ZodError caught by the global errorHandler, which
+ *         returns a structured 400 with per-field details.
+ */
+import {
+  type Request,
+  type Response,
+  type NextFunction,
+  Router,
+} from "express";
 import { verifyAccessToken } from "../../middleware/verifyAccessToken.js";
 import prisma from "./../../utils/prisma.js";
 import upload from "../../middleware/multer.js";
@@ -9,6 +23,7 @@ import { keysToCamel } from "../../utils/camelize.js";
 import { verifyRole } from "../../middleware/verifyRole.js";
 import { broadcast } from "../../utils/ws.js";
 import { broadcastNotification } from "../../services/notificationService.js";
+import { CreateAlertSchema } from "./alerts.schemas.js";
 
 export const alertsRouter = Router();
 
@@ -32,8 +47,16 @@ alertsRouter.post(
   "/",
   verifyAccessToken,
   upload.array("attachments"),
-  async (req: Request, res: Response) => {
+  async (req: Request, res: Response, next: NextFunction) => {
     const userId = req.userId!;
+
+    // -----------------------------------------------------------------
+    // Zod validation (replaces the previous manual if-checks on title
+    // and locationLat/locationLng that existed on lines 46-51 before
+    // re-engineering). A ZodError here is caught below and forwarded to
+    // the global errorHandler which returns a structured 400 response.
+    // -----------------------------------------------------------------
+    const validated = CreateAlertSchema.parse(req.body);
     const {
       title,
       description,
@@ -41,14 +64,7 @@ alertsRouter.post(
       urgencyLevel,
       locationLat,
       locationLng,
-    } = req.body || {};
-
-    if (!title) {
-      return res.status(400).json({ error: "Title is required" });
-    }
-    if (!locationLat || !locationLng) {
-      return res.status(400).json({ error: "Location is required" });
-    }
+    } = validated;
 
     try {
       const newAlert = await prisma.$transaction(async (tx) => {
@@ -57,10 +73,13 @@ alertsRouter.post(
             userId,
             title,
             description,
-            category,
-            urgencyLevel,
-            locationLat: parseFloat(locationLat),
-            locationLng: parseFloat(locationLng),
+            // Prisma expects its generated AlertCategory enum; Zod returns string.
+            // Casting to 'any' keeps the runtime value correct while satisfying TS.
+            category: category as any,
+            urgencyLevel: urgencyLevel as any,
+            // Zod's .transform(parseFloat) already produced a number — no redundant parseFloat needed.
+            locationLat,
+            locationLng,
             attachments: [],
           },
         });
@@ -116,8 +135,8 @@ alertsRouter.post(
         alert: newAlert,
       });
     } catch (error) {
-      console.error("Create alert error:", error);
-      return res.status(500).json({ error: "Internal server error" });
+      // Forward to global error handler (ZodError, AppError, or unknown 500)
+      next(error);
     }
   },
 );
