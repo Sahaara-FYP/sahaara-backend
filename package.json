@@ -32,8 +32,9 @@
     "jsonwebtoken": "^9.0.2",
     "morgan": "^1.10.1",
     "multer": "^2.0.2",
-    "nodemon": "^3.1.10",
     "node-cron": "^3.0.3",
+    "nodemailer": "^8.0.7",
+    "nodemon": "^3.1.10",
     "ws": "^8.18.3",
     "zod": "^4.1.11"
   },
@@ -45,6 +46,7 @@
     "@types/multer": "^2.0.0",
     "@types/node": "^24.5.2",
     "@types/node-cron": "^3.0.11",
+    "@types/nodemailer": "^8.0.0",
     "prisma": "^6.16.3",
     "ts-node": "^10.9.2",
     "tsconfig-paths": "^4.2.0",

@@ -20,7 +20,7 @@ model User {
   dateOfBirth         DateTime?          @map("date_of_birth")
   profilePictureUrl   String?            @map("profile_picture_url")
   bio                 String?
-  cnicNumber          String?            @map("cnic_number") @db.VarChar(20)
+  cnicNumber          String?            @unique @map("cnic_number") @db.VarChar(20)
   skills              Json?
   role                UserRole           @default(user)
   isActive            Boolean            @default(true) @map("is_active")
@@ -28,6 +28,7 @@ model User {
   updatedAt           DateTime           @default(now()) @updatedAt @map("updated_at")
   completedOnboarding Boolean            @default(false) @map("completed_onboarding")
   isVerified Boolean @default(false) @map("is_verified")
+  isEmailVerified Boolean @default(false) @map("is_email_verified")
 
   // Location (synced from mobile app)
   lastLocationLat       Float?             @map("last_location_lat")

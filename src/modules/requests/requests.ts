@@ -70,82 +70,81 @@ requestsRouter.post(
     const userId = req.userId!;
 
     try {
-      const newRequest = await prisma.$transaction(async (tx) => {
-        let request = await tx.request.create({
-          data: {
-            userId,
-            title,
-            description,
-            category,
-            urgencyLevel,
-            locationLat: parseFloat(locationLat),
-            locationLng: parseFloat(locationLng),
-            postAnonymously,
-            visibilityVerifiedOnly,
-            visibilityWomenOnly,
-            maxHelpers,
-            expiresAt: new Date(
-              Date.now() +
-                (urgencyLevel === "high" ? 2 : 7) * 24 * 60 * 60 * 1000,
-            ),
-            attachments: [],
-          },
-        });
-
-        const attachments: string[] = [];
-
-        if (req.files && Array.isArray(req.files)) {
-          for (const file of req.files as Express.Multer.File[]) {
-            const safeName = file.originalname.replace(/\s+/g, "_");
-            const filePath = `requests/${request.id}/${Date.now()}_${safeName}`;
-
-            const { data, error } = await supabase.storage
-              .from("attachments")
-              .upload(filePath, file.buffer, {
-                cacheControl: "3600",
-                upsert: false,
-              });
-
-            if (error) {
-              console.error("Supabase upload error:", error);
-              continue;
-            }
-            attachments.push(data.path);
-          }
-        }
-
-        if (attachments.length > 0) {
-          request = await tx.request.update({
-            where: { id: request.id },
-            data: { attachments: attachments as Prisma.InputJsonValue },
-          });
-        }
-
-        return request;
+      // 1. Create the request record first
+      const newRequest = await prisma.request.create({
+        data: {
+          userId,
+          title,
+          description,
+          category,
+          urgencyLevel,
+          locationLat: parseFloat(locationLat),
+          locationLng: parseFloat(locationLng),
+          postAnonymously: postAnonymously === "true",
+          visibilityVerifiedOnly: visibilityVerifiedOnly === "true",
+          visibilityWomenOnly: visibilityWomenOnly === "true",
+          maxHelpers: maxHelpers ? parseInt(maxHelpers) : 1,
+          expiresAt: new Date(
+            Date.now() +
+              (urgencyLevel === "high" ? 2 : 7) * 24 * 60 * 60 * 1000,
+          ),
+          attachments: [],
+        },
       });
+
+      // 2. Handle file uploads outside the transaction
+      const attachments: string[] = [];
+      if (req.files && Array.isArray(req.files)) {
+        for (const file of req.files as Express.Multer.File[]) {
+          const safeName = file.originalname.replace(/\s+/g, "_");
+          const filePath = `requests/${newRequest.id}/${Date.now()}_${safeName}`;
+
+          const { data, error } = await supabase.storage
+            .from("attachments")
+            .upload(filePath, file.buffer, {
+              cacheControl: "3600",
+              upsert: false,
+            });
+
+          if (error) {
+            console.error("Supabase upload error:", error);
+            continue;
+          }
+          attachments.push(data.path);
+        }
+      }
+
+      // 3. Update the request with attachment paths if any were uploaded
+      let finalRequest = newRequest;
+      if (attachments.length > 0) {
+        finalRequest = await prisma.request.update({
+          where: { id: newRequest.id },
+          data: { attachments: attachments as Prisma.InputJsonValue },
+        });
+      }
 
       broadcast("requests_changed");
 
       // Create a group ChatRoom for this request
-      createGroupRoom(userId, { requestId: newRequest.id }).catch((e) =>
+      createGroupRoom(userId, { requestId: finalRequest.id }).catch((e) =>
         console.error("createGroupRoom error:", e),
       );
 
       // Smart Matching & Proximity Broadcast (Top 20 users within 10km radius)
       await smartMatchRequest(
-        newRequest.id,
+        finalRequest.id,
         "New Help Request Nearby",
-        `${newRequest.title}`,
-        newRequest.category,
-        newRequest.locationLat,
-        newRequest.locationLng,
+        `${finalRequest.title}`,
+        finalRequest.category,
+        finalRequest.locationLat,
+        finalRequest.locationLng,
         10, // 10km radius
         20, // Limit to Top 20 for quality matching
       );
 
       return res.status(201).json({
         message: "Request created successfully",
-        request: newRequest,
+        request: finalRequest,
       });
     } catch (error) {
       console.error("Create request error:", error);

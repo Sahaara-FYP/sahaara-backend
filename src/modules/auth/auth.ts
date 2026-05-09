@@ -1,9 +1,14 @@
 import { Router, type Request, type Response } from "express";
 import prisma from "../../utils/prisma.js";
 import bcrypt from "bcryptjs";
-import { generateAccessToken, generateRefreshToken } from "./auth.service.js";
+import {
+  generateAccessToken,
+  generateRefreshToken,
+  generateVerificationToken,
+} from "./auth.service.js";
 import jwt from "jsonwebtoken";
 import { createSignedUrls } from "../../utils/createSignedURL.js";
+import { sendVerificationEmail } from "../../utils/email.js";
 
 export const authRouter = Router();
 
@@ -54,6 +59,13 @@ authRouter.post("/register", async (req: Request, res: Response) => {
     }
 
     const { passwordHash, ...safeUser } = newUser;
+
+    // Generate Verification Token and Send Email
+    const verificationToken = generateVerificationToken({ userId: newUser.id });
+    // We don't await this to keep registration fast, or we could await if we want to ensure it's sent
+    sendVerificationEmail(email, verificationToken).catch((err) =>
+      console.error("Initial verification email failed:", err),
+    );
 
     const accessToken = generateAccessToken({
       userId: newUser.id,
@@ -194,5 +206,151 @@ authRouter.post("/refresh-token", async (req: Request, res: Response) => {
   } catch (error: any) {
     console.error("Refresh token error:", error);
     return res.status(401).json({ error: "Invalid or expired refresh token" });
+  }
+});
+
+/**
+ * @api {get} /auth/verify-email Verify Email
+ * @apiName VerifyEmail
+ * @apiGroup Auth
+ */
+authRouter.get("/verify-email", async (req: Request, res: Response) => {
+  try {
+    const { token } = req.query;
+
+    if (!token || typeof token !== "string") {
+      return res
+        .status(400)
+        .send("<h1>Invalid Request</h1><p>Verification token is missing.</p>");
+    }
+
+    const decoded = jwt.verify(
+      token,
+      process.env.VERIFICATION_SECRET || "verification-secret-key-123",
+    ) as { userId: string };
+
+    await prisma.user.update({
+      where: { id: decoded.userId },
+      data: { isEmailVerified: true },
+    });
+
+    // Return a simple success page
+    return res.send(`
+      <div style="font-family: Arial, sans-serif; text-align: center; padding: 50px;">
+        <h1 style="color: #3b82f6;">Email Verified!</h1>
+        <p>Your email has been successfully verified. You can now return to the Sahaara app.</p>
+        <p style="color: #666; font-size: 14px;">You can close this window now.</p>
+      </div>
+    `);
+  } catch (error) {
+    console.error("Email verification error:", error);
+    return res
+      .status(400)
+      .send(
+        "<h1>Verification Failed</h1><p>Link expired or invalid. Please request a new one from the app.</p>",
+      );
+  }
+});
+
+/**
+ * @api {post} /auth/user/resend-verification-email Resend Verification Email
+ * @apiName ResendVerificationEmail
+ * @apiGroup Auth
+ */
+authRouter.post(
+  "/user/resend-verification-email",
+  async (req: Request, res: Response) => {
+    try {
+      // This assumes the user is logged in or provided their identity
+      // Since verifyEmail.tsx calls this, it should have the token in headers if protected
+      // But since it's /resend-verification-email we might need verifyAccessToken middleware
+      // For now, let's just make it simple, if no user is provided, we can't send
+
+      // In typical apps, we get user from token
+      const authHeader = req.headers.authorization;
+      if (!authHeader) return res.status(401).json({ error: "Unauthorized" });
+
+      const token = authHeader.split(" ")[1];
+      const decoded = jwt.verify(
+        token,
+        process.env.JWT_ACCESS_SECRET || "fallbacktoverysecretkeyhehe",
+      ) as { userId: string };
+
+      const user = await prisma.user.findUnique({
+        where: { id: decoded.userId },
+      });
+      if (!user) return res.status(404).json({ error: "User not found" });
+
+      const verificationToken = generateVerificationToken({ userId: user.id });
+      await sendVerificationEmail(user.email, verificationToken);
+
+      return res.status(200).json({ message: "Verification email sent" });
+    } catch (error) {
+      console.error("Resend verification error:", error);
+      return res.status(500).json({ error: "Internal server error" });
+    }
+  },
+);
+/**
+ * @api {get} /auth/user/me Get Current User (Polling endpoint for verification)
+ * @apiName GetUserMe
+ * @apiGroup Auth
+ */
+authRouter.get("/user/me", async (req: Request, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader) return res.status(401).json({ error: "Unauthorized" });
+
+    const token = authHeader.split(" ")[1];
+    const decoded = jwt.verify(
+      token,
+      process.env.JWT_ACCESS_SECRET || "fallbacktoverysecretkeyhehe",
+    ) as { userId: string };
+
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.userId },
+    });
+
+    if (!user) return res.status(404).json({ error: "User not found" });
+
+    const { passwordHash, ...safeUser } = user;
+
+    return res.status(200).json({
+      user: safeUser,
+      // For compatibility with some mobile logic that might expect Supabase-like structure
+      auth: {
+        email_confirmed_at: user.isEmailVerified ? new Date() : null,
+      },
+    });
+  } catch (error) {
+    console.error("Get /user/me error:", error);
+    return res.status(401).json({ error: "Invalid token" });
+  }
+});
+
+/**
+ * @api {post} /auth/logout Logout
+ * @apiName Logout
+ * @apiGroup Auth
+ */
+authRouter.post("/logout", async (req: Request, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (authHeader) {
+      const token = authHeader.split(" ")[1];
+      const decoded = jwt.decode(token) as { userId: string };
+
+      if (decoded && decoded.userId) {
+        await prisma.user.update({
+          where: { id: decoded.userId },
+          data: { pushToken: null },
+        });
+      }
+    }
+    return res.status(200).json({ message: "Logged out successfully" });
+  } catch (error) {
+    console.error("Logout error:", error);
+    // Still return 200 as the client should proceed with local logout anyway
+    return res.status(200).json({ message: "Logged out" });
   }
 });

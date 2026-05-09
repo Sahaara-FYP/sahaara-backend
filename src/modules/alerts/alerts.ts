@@ -51,69 +51,70 @@ alertsRouter.post(
     }
 
     try {
-      const newAlert = await prisma.$transaction(async (tx) => {
-        let alert = await tx.alert.create({
-          data: {
-            userId,
-            title,
-            description,
-            category,
-            urgencyLevel,
-            locationLat: parseFloat(locationLat),
-            locationLng: parseFloat(locationLng),
-            attachments: [],
-          },
-        });
-
-        const attachments: string[] = [];
-
-        if (req.files && Array.isArray(req.files)) {
-          for (const file of req.files as Express.Multer.File[]) {
-            const safeName = file.originalname.replace(/\s+/g, "_");
-            const filePath = `alerts/${alert.id}/${Date.now()}_${safeName}`;
-
-            const { data, error } = await supabase.storage
-              .from("attachments")
-              .upload(filePath, file.buffer, {
-                cacheControl: "3600",
-                upsert: false,
-              });
-
-            if (error) {
-              console.error("Supabase upload error:", error);
-              continue;
-            }
-            attachments.push(data.path);
-          }
-        }
-
-        if (attachments.length > 0) {
-          alert = await tx.alert.update({
-            where: { id: alert.id },
-            data: { attachments: attachments as Prisma.InputJsonValue },
-          });
-        }
-
-        return alert;
+      // Create initial alert record (without attachments yet)
+      const initialAlert = await prisma.alert.create({
+        data: {
+          userId,
+          title,
+          description,
+          category,
+          urgencyLevel,
+          locationLat: parseFloat(locationLat),
+          locationLng: parseFloat(locationLng),
+          attachments: [],
+        },
       });
+
+      const attachmentsArray: string[] = [];
+
+      // Handle file uploads outside the transaction
+      if (req.files && Array.isArray(req.files)) {
+        for (const file of req.files as Express.Multer.File[]) {
+          const safeName = file.originalname.replace(/\s+/g, "_");
+          const filePath = `alerts/${initialAlert.id}/${Date.now()}_${safeName}`;
+
+          const { data, error } = await supabase.storage
+            .from("attachments")
+            .upload(filePath, file.buffer, {
+              cacheControl: "3600",
+              upsert: false,
+            });
+
+          if (error) {
+            console.error("Supabase upload error:", error);
+            continue;
+          }
+          attachmentsArray.push(data.path);
+        }
+      }
+
+      // Update alert with attachment paths if any were uploaded
+      let finalAlert = initialAlert;
+      if (attachmentsArray.length > 0) {
+        finalAlert = await prisma.alert.update({
+          where: { id: initialAlert.id },
+          data: { attachments: attachmentsArray as Prisma.InputJsonValue },
+        });
+      }
+
       broadcast("alerts_changed");
 
       // Broadcast alert to all nearby users (20km radius, no limit, exclude creator)
       await broadcastNotification(
-        `Alert: ${newAlert.title}`,
-        newAlert.description || "A new alert has been posted in your area.",
-        "alert_nearby", // Fixed type
-        { alertId: newAlert.id },
-        Number(newAlert.locationLat),
-        Number(newAlert.locationLng),
+        `Alert: ${finalAlert.title}`,
+        finalAlert.description || "A new alert has been posted in your area.",
+        "alert_nearby",
+        { alertId: finalAlert.id },
+        Number(finalAlert.locationLat),
+        Number(finalAlert.locationLng),
         20, // 20km radius for alerts
         undefined, // no limit
-        newAlert.userId, // exclude the creator
+        finalAlert.userId, // exclude the creator
       );
 
       return res.status(201).json({
         message: "Alert created successfully",
-        alert: newAlert,
+        alert: finalAlert,
       });
     } catch (error) {
       console.error("Create alert error:", error);

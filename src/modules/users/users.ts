@@ -58,6 +58,9 @@ usersRouter.post(
             .status(400)
             .json({ error: "Phone number is already taken" });
         }
+        if (existingUser.cnicNumber === data.cnicNumber) {
+          return res.status(400).json({ error: "CNIC is already taken" });
+        }
       }
 
       const updatedUser = await prisma.user.update({
@@ -82,7 +85,7 @@ usersRouter.post(
       if (error.code === "P2002") {
         return res
           .status(400)
-          .json({ error: "Username or phone number already taken" });
+          .json({ error: "Username or phone number or CNIC already taken" });
       }
 
       return res.status(500).json({ error: "Internal server error" });

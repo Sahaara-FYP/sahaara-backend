@@ -77,74 +77,74 @@ offersRouter.post(
     }
 
     try {
-      const newOffer = await prisma.$transaction(async (tx) => {
-        let offer = await tx.offer.create({
-          data: {
-            userId,
-            title,
-            description,
-            category,
-            type,
-            locationLat: parseFloat(locationLat),
-            locationLng: parseFloat(locationLng),
-            ...(type === "resource" && {
-              totalQuantity: parseInt(totalQuantity),
-              remainingQuantity: parseInt(totalQuantity),
-              unit,
-            }),
-            ...(type === "service" && {
-              availability,
-              experienceDesc,
-            }),
-            attachments: [],
-          },
-        });
-
-        const attachments: string[] = [];
-
-        if (req.files && Array.isArray(req.files)) {
-          for (const file of req.files as Express.Multer.File[]) {
-            const safeName = file.originalname.replace(/\s+/g, "_");
-            const filePath = `offers/${offer.id}/${Date.now()}_${safeName}`;
-
-            const { data, error } = await supabase.storage
-              .from("attachments")
-              .upload(filePath, file.buffer, {
-                cacheControl: "3600",
-                upsert: false,
-              });
-
-            if (error) {
-              console.error("Supabase upload error:", error);
-              continue;
-            }
-            attachments.push(data.path);
-          }
-        }
-
-        if (attachments.length > 0) {
-          offer = await tx.offer.update({
-            where: { id: offer.id },
-            data: { attachments: attachments as Prisma.InputJsonValue },
-          });
-        }
-
-        return offer;
+      // Create initial offer record (without attachments yet)
+      const initialOffer = await prisma.offer.create({
+        data: {
+          userId,
+          title,
+          description,
+          category,
+          type,
+          locationLat: parseFloat(locationLat),
+          locationLng: parseFloat(locationLng),
+          ...(type === "resource" && {
+            totalQuantity: parseInt(totalQuantity),
+            remainingQuantity: parseInt(totalQuantity),
+            unit,
+          }),
+          ...(type === "service" && {
+            availability,
+            experienceDesc,
+          }),
+          attachments: [],
+        },
       });
+
+      const attachmentsArray: string[] = [];
+
+      // Handle file uploads outside the transaction
+      if (req.files && Array.isArray(req.files)) {
+        for (const file of req.files as Express.Multer.File[]) {
+          const safeName = file.originalname.replace(/\s+/g, "_");
+          const filePath = `offers/${initialOffer.id}/${Date.now()}_${safeName}`;
+
+          const { data, error } = await supabase.storage
+            .from("attachments")
+            .upload(filePath, file.buffer, {
+              cacheControl: "3600",
+              upsert: false,
+            });
+
+          if (error) {
+            console.error("Supabase upload error:", error);
+            continue;
+          }
+          attachmentsArray.push(data.path);
+        }
+      }
+
+      // Update offer with attachment paths if any were uploaded
+      let finalOffer = initialOffer;
+      if (attachmentsArray.length > 0) {
+        finalOffer = await prisma.offer.update({
+          where: { id: initialOffer.id },
+          data: { attachments: attachmentsArray as Prisma.InputJsonValue },
+        });
+      }
 
       broadcast("offers_changed");
 
       // Create a group ChatRoom for this offer
-      createGroupRoom(userId, { offerId: newOffer.id }).catch((e) =>
+      createGroupRoom(userId, { offerId: finalOffer.id }).catch((e) =>
         console.error("createGroupRoom error:", e),
       );
 
       // Broadcast new offer
-      broadcast("offers_changed", { offerId: newOffer.id });
+      broadcast("offers_changed", { offerId: finalOffer.id });
 
       return res.status(201).json({
         message: "Offer created successfully",
-        data: newOffer,
+        data: finalOffer,
       });
     } catch (error) {
       console.error("Create offer error:", error);
@@ -516,7 +516,9 @@ offersRouter.get(
           offer.attachments = await createSignedUrls(offer.attachments);
         }
         if (offer.volunteer?.profilePictureUrl) {
-          const [signedPicUrl] = await createSignedUrls([offer.volunteer.profilePictureUrl]);
+          const [signedPicUrl] = await createSignedUrls([
+            offer.volunteer.profilePictureUrl,
+          ]);
           if (signedPicUrl) {
             offer.volunteer.profilePictureUrl = signedPicUrl;
           }
@@ -1246,7 +1248,9 @@ offersRouter.get(
       if (offer.interactions?.length) {
         for (const inter of offer.interactions) {
           if (inter.user?.profilePictureUrl) {
-            const [signedUrl] = await createSignedUrls([inter.user.profilePictureUrl]);
+            const [signedUrl] = await createSignedUrls([
+              inter.user.profilePictureUrl,
+            ]);
             if (signedUrl) {
               inter.user.profilePictureUrl = signedUrl;
             }
@@ -1258,7 +1262,8 @@ offersRouter.get(
       const { user, ...offerData } = offer as any;
       const volunteer = user;
       if (volunteer?.profile_picture_url || volunteer?.profilePictureUrl) {
-        const picUrl = volunteer.profilePictureUrl || volunteer.profile_picture_url;
+        const picUrl =
+          volunteer.profilePictureUrl || volunteer.profile_picture_url;
         const [signedPicUrl] = await createSignedUrls([picUrl]);
         volunteer.profilePictureUrl = signedPicUrl;
       }
