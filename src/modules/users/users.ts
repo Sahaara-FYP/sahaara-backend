@@ -1009,3 +1009,104 @@ usersRouter.patch(
     }
   },
 );
+
+/**
+ * @api {get} /users/:userId/public Get Public User Profile
+ * @apiName GetPublicUserProfile
+ * @apiGroup Users
+ *
+ * @apiHeader {String} Authorization Bearer access token.
+ *
+ * @apiParam {String} userId ID of the user to fetch.
+ */
+usersRouter.get(
+  "/:userId/public",
+  verifyAccessToken,
+  async (req: Request, res: Response) => {
+    try {
+      const { userId } = req.params;
+
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: {
+          id: true,
+          fullName: true,
+          username: true,
+          profilePictureUrl: true,
+          bio: true,
+          gender: true,
+          isVerified: true,
+          averageRating: true,
+          totalRatings: true,
+          createdAt: true,
+          skills: true,
+        },
+      });
+
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      // Handle profile picture signed URL
+      if (user.profilePictureUrl) {
+        const [signedUrl] = await createSignedUrls([user.profilePictureUrl]);
+        if (signedUrl) user.profilePictureUrl = signedUrl;
+      }
+
+      // 1. Help Given (Accepted participations in completed requests)
+      const helpGivenCount = await prisma.requestParticipator.count({
+        where: {
+          userId: user.id,
+          status: "accepted",
+          request: { status: "completed" },
+        },
+      });
+
+      // 2. Offers Fulfilled (Interactions on their own offers that reached 'fulfilled')
+      const offersFulfilledCount = await prisma.offerInteraction.count({
+        where: {
+          offer: { userId: user.id },
+          status: "fulfilled",
+        },
+      });
+
+      // 3. Fetch recent ratings/reviews
+      const ratings = await prisma.rating.findMany({
+        where: { toId: user.id },
+        orderBy: { createdAt: "desc" },
+        take: 10,
+        include: {
+          from: {
+            select: {
+              id: true,
+              fullName: true,
+              profilePictureUrl: true,
+            },
+          },
+        },
+      });
+
+      // Sign reviewer profile pictures
+      for (const rating of ratings) {
+        if (rating.from.profilePictureUrl) {
+          const [s] = await createSignedUrls([rating.from.profilePictureUrl]);
+          if (s) {
+            rating.from.profilePictureUrl = s;
+          }
+        }
+      }
+
+      return res.status(200).json({
+        user,
+        stats: {
+          helpGivenCount,
+          offersFulfilledCount,
+        },
+        ratings,
+      });
+    } catch (error) {
+      console.error("Get public profile error:", error);
+      return res.status(500).json({ error: "Internal server error" });
+    }
+  },
+);

@@ -140,6 +140,10 @@ requestsRouter.post(
         finalRequest.locationLng,
         10, // 10km radius
         20, // Limit to Top 20 for quality matching
+        {
+          visibilityVerifiedOnly: finalRequest.visibilityVerifiedOnly,
+          visibilityWomenOnly: finalRequest.visibilityWomenOnly,
+        },
       );
 
       return res.status(201).json({
@@ -1526,6 +1530,7 @@ requestsRouter.get(
               username: true,
               email: true,
               profilePictureUrl: true,
+              averageRating: true,
             },
           },
           participators: {
@@ -1540,6 +1545,7 @@ requestsRouter.get(
                   profilePictureUrl: true,
                   gender: true,
                   isVerified: true,
+                  averageRating: true,
                 },
               },
             },

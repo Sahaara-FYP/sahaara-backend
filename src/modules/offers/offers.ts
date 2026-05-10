@@ -222,6 +222,21 @@ offersRouter.get(
         filters.push(
           `(o.type = 'service' OR (o.type = 'resource' AND o.remaining_quantity > 0))`,
         );
+
+        // Hide offers where user's latest interaction is 'rejected'
+        // $2 is the userId parameter pushed at line 215
+        filters.push(`
+          NOT EXISTS (
+            SELECT 1 FROM "OfferInteraction" oi
+            WHERE oi.offer_id = o.id
+              AND oi.user_id = $2
+              AND oi.status = 'rejected'::"InteractionStatus"
+              AND oi.created_at = (
+                SELECT MAX(created_at) FROM "OfferInteraction" oi2
+                WHERE oi2.offer_id = o.id AND oi2.user_id = $2
+              )
+          )
+        `);
       } else {
         // Admin can optionally filter by moderationStatus
         if (moderationStatus) {
@@ -290,7 +305,6 @@ offersRouter.get(
         needDistance = true;
       }
 
-      // Select extra fields for user
       let selectExtra = "";
       if (isUser) {
         const userIdParamIndex = params.length + 1;
@@ -310,7 +324,16 @@ offersRouter.get(
     WHERE oi.offer_id = sub.id
       AND oi.user_id = $${userIdParamIndex}
     LIMIT 1
-  ) AS "interactionStatus"
+  ) AS "interactionStatus",
+
+  (
+    SELECT EXISTS (
+      SELECT 1 FROM "Rating" r
+      WHERE r.offer_id = sub.id
+        AND r.from_id = $${userIdParamIndex}
+        AND r.to_id = sub.user_id
+    )
+  ) AS "hasBeenRated"
 `;
       }
 
@@ -601,22 +624,42 @@ offersRouter.post(
         }
       }
 
-      const existingInteraction = await prisma.offerInteraction.findUnique({
+      const existingInteraction = await prisma.offerInteraction.findFirst({
         where: {
-          offerId_userId: { offerId, userId },
+          offerId,
+          userId,
+          status: {
+            in: ["pending", "accepted", "fulfilled"],
+          },
         },
+        orderBy: { createdAt: "desc" },
       });
 
-      if (
-        existingInteraction &&
-        !["cancelled", "rejected"].includes(existingInteraction.status)
-      ) {
-        return res.status(400).json({
-          error: `You already have a ${existingInteraction.status} interaction with this offer`,
-        });
+      if (existingInteraction) {
+        if (existingInteraction.status === "fulfilled") {
+          // Check if user has rated for this offer already
+          const hasRated = await prisma.rating.findFirst({
+            where: {
+              offerId,
+              fromId: userId,
+              toId: offer.userId,
+            },
+          });
+
+          if (!hasRated) {
+            return res.status(400).json({
+              error:
+                "Please rate the owner for your previous help before requesting again.",
+            });
+          }
+          // If rated, we allow creating a NEW interaction record below
+        } else {
+          return res.status(400).json({
+            error: `You already have a ${existingInteraction.status} interaction with this offer`,
+          });
+        }
       }
 
-      let interaction;
       const interactionData = {
         status: "pending" as const,
         ...(offer.type === "resource" && {
@@ -625,21 +668,28 @@ offersRouter.post(
         ...(offer.type === "service" && { message }),
       };
 
-      if (existingInteraction) {
-        interaction = await prisma.offerInteraction.update({
-          where: { id: existingInteraction.id },
-          data: interactionData,
-        });
-      } else {
-        interaction = await prisma.offerInteraction.create({
-          data: {
-            offerId,
-            userId,
-            ...interactionData,
-          },
-        });
-      }
+      const interaction = await prisma.offerInteraction.create({
+        data: {
+          offerId,
+          userId,
+          ...interactionData,
+        },
+      });
       broadcast("offers_changed", { offerId });
+
+      // Notify Owner
+      const requester = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { fullName: true },
+      });
+
+      await sendDirectNotification(
+        offer.userId,
+        "New Interaction for your Offer",
+        `${requester?.fullName || "Someone"} has interacted with your offer: "${offer.title}"`,
+        "general",
+        { offerId: offer.id, interactionId: interaction.id },
+      ).catch((e) => console.error("Notification error:", e));
 
       return res.status(201).json({
         message: "Interaction created successfully",
@@ -1171,8 +1221,29 @@ offersRouter.get(
         }
       }
 
+      // Fetch ratings to determine which interactions have been completed with a rating
+      const offerIds = interactions.map((i) => i.offerId);
+      const ratings = await prisma.rating.findMany({
+        where: {
+          offerId: { in: offerIds },
+          fromId: userId,
+        },
+      });
+
+      const interactionsWithRatings = interactions.map((interaction) => {
+        const hasBeenRated = ratings.some(
+          (r) =>
+            r.offerId === interaction.offerId &&
+            r.toId === interaction.offer.userId,
+        );
+        return {
+          ...interaction,
+          hasBeenRated,
+        };
+      });
+
       return res.status(200).json({
-        data: interactions,
+        data: interactionsWithRatings,
         message: "Your interactions fetched successfully!",
       });
     } catch (error) {
@@ -1213,9 +1284,13 @@ offersRouter.get(
               username: true,
               email: true,
               profilePictureUrl: true,
+              averageRating: true,
             },
           },
           interactions: {
+            orderBy: {
+              createdAt: "desc",
+            },
             include: {
               user: {
                 select: {
@@ -1224,6 +1299,7 @@ offersRouter.get(
                   username: true,
                   email: true,
                   profilePictureUrl: true,
+                  averageRating: true,
                 },
               },
             },
@@ -1235,6 +1311,38 @@ offersRouter.get(
         return res.status(404).json({ error: "Offer not found" });
       }
 
+      // Fetch all ratings for this offer to determine who has rated whom
+      const ratings = await prisma.rating.findMany({
+        where: { offerId: id },
+      });
+
+      const interactionsWithRatings = offer.interactions.map((interaction) => {
+        const hasBeenRatedByRequester = ratings.some(
+          (r) => r.fromId === interaction.userId && r.toId === offer.userId,
+        );
+        const hasBeenRatedByOwner = ratings.some(
+          (r) => r.fromId === offer.userId && r.toId === interaction.userId,
+        );
+        return {
+          ...interaction,
+          hasBeenRatedByRequester,
+          hasBeenRatedByOwner,
+          hasBeenRated: hasBeenRatedByRequester, // Backward compatibility for UI
+        };
+      });
+
+      // Sign profile pictures for each interactor
+      for (const inter of interactionsWithRatings) {
+        if (inter.user?.profilePictureUrl) {
+          const [signedUrl] = await createSignedUrls([
+            inter.user.profilePictureUrl,
+          ]);
+          if (signedUrl) {
+            inter.user.profilePictureUrl = signedUrl;
+          }
+        }
+      }
+
       const isOwnOffer = offer.userId === userId;
 
       // 🖼 Attach signed URLs for offer attachments
@@ -1244,23 +1352,9 @@ offersRouter.get(
         );
       }
 
-      // 🖼 Sign profile pictures for each interactor
-      if (offer.interactions?.length) {
-        for (const inter of offer.interactions) {
-          if (inter.user?.profilePictureUrl) {
-            const [signedUrl] = await createSignedUrls([
-              inter.user.profilePictureUrl,
-            ]);
-            if (signedUrl) {
-              inter.user.profilePictureUrl = signedUrl;
-            }
-          }
-        }
-      }
-
       // 🔄 Rename 'user' to 'volunteer' for consistency with list view
-      const { user, ...offerData } = offer as any;
-      const volunteer = user;
+      const { user: offerOwner, ...offerData } = offer as any;
+      const volunteer = offerOwner;
       if (volunteer?.profile_picture_url || volunteer?.profilePictureUrl) {
         const picUrl =
           volunteer.profilePictureUrl || volunteer.profile_picture_url;
@@ -1270,6 +1364,7 @@ offersRouter.get(
 
       return res.status(200).json({
         ...offerData,
+        interactions: interactionsWithRatings,
         volunteer,
         isOwnOffer,
       });

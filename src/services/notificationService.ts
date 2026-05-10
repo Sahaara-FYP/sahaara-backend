@@ -64,6 +64,8 @@ export async function broadcastNotification(
   radiusKm: number,
   limit?: number,
   excludeUserId?: string,
+  verifiedOnly: boolean = false,
+  womenOnly: boolean = false,
 ) {
   try {
     // 1. Fetch all users who have recently updated their location and have a push token
@@ -77,12 +79,15 @@ export async function broadcastNotification(
         lastLocationLng: { not: null },
         pushToken: { not: null },
         ...(excludeUserId ? { id: { not: excludeUserId } } : {}),
+        ...(verifiedOnly ? { isVerified: true } : {}),
+        ...(womenOnly ? { gender: "female" } : {}),
       },
       select: {
         id: true,
         pushToken: true,
         lastLocationLat: true,
         lastLocationLng: true,
+        isVerified: true,
       },
     });
 
@@ -121,7 +126,10 @@ export async function broadcastNotification(
     // 5. Send Push Notifications via Expo
     const pushPromises = targetUsers.map((u) => {
       if (u.pushToken) {
-        return sendPushNotification(u.pushToken, title, body, metadata);
+        return sendPushNotification(u.pushToken, title, body, {
+          ...metadata,
+          type,
+        });
       }
     });
 
@@ -141,6 +149,7 @@ export async function smartMatchRequest(
   lng: number,
   radiusKm: number = 10,
   limit: number = 20,
+  options?: { visibilityVerifiedOnly?: boolean; visibilityWomenOnly?: boolean },
 ) {
   try {
     const requester = await prisma.request.findUnique({
@@ -155,6 +164,8 @@ export async function smartMatchRequest(
         lastLocationLng: { not: null },
         pushToken: { not: null },
         ...(requester?.userId ? { id: { not: requester.userId } } : {}),
+        ...(options?.visibilityVerifiedOnly ? { isVerified: true } : {}),
+        ...(options?.visibilityWomenOnly ? { gender: "female" } : {}),
       },
       select: {
         id: true,
@@ -238,7 +249,10 @@ export async function smartMatchRequest(
     // 4. Send Real-time Push Notifications
     const pushPromises = scoredUsers.map((u) => {
       if (u.pushToken) {
-        return sendPushNotification(u.pushToken, title, body, { requestId });
+        return sendPushNotification(u.pushToken, title, body, {
+          requestId,
+          type: "help_request_nearby",
+        });
       }
     });
 
@@ -277,7 +291,10 @@ export async function sendDirectNotification(
     });
 
     if (user.pushToken) {
-      await sendPushNotification(user.pushToken, title, body, metadata);
+      await sendPushNotification(user.pushToken, title, body, {
+        ...metadata,
+        type,
+      });
     }
   } catch (error) {
     console.error("Error sending direct notification:", error);

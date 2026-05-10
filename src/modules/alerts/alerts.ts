@@ -110,6 +110,7 @@ alertsRouter.post(
         20, // 20km radius for alerts
         undefined, // no limit
         finalAlert.userId, // exclude the creator
+        true, // verifiedOnly
       );
 
       return res.status(201).json({
