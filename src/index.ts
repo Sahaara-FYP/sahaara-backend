@@ -66,6 +66,7 @@ app.use("/api/notifications", notificationsRouter);
 app.use("/api/chat", chatRouter);
 
 app.use("/api/docs", express.static(path.join(__dirname, "../apidoc")));
+app.use("/public", express.static(path.join(__dirname, "../public")));
 
 const server = http.createServer(app);
 

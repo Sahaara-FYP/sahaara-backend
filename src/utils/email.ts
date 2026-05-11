@@ -4,13 +4,14 @@ const resend = new Resend(process.env.RESEND_API_KEY);
 
 // Use a verified domain or the default Resend onboarding email
 const DEFAULT_FROM = process.env.EMAIL_FROM || "onboarding@resend.dev";
+const LOGO_URL = `${process.env.PUBLIC_BACKEND_URL}/public/logo.png`;
 
 export const sendVerificationEmail = async (email: string, token: string) => {
   const verifyUrl = `${process.env.BACKEND_URL}/auth/verify-email?token=${token}`;
 
   try {
     const { data, error } = await resend.emails.send({
-      from: `Sahaara Community <${DEFAULT_FROM}>`,
+      from: `Sahaara | Official <${DEFAULT_FROM}>`,
       to: email,
       subject: "Welcome to Sahaara! Just one last step...",
       html: `
@@ -19,7 +20,9 @@ export const sendVerificationEmail = async (email: string, token: string) => {
           
           <!-- BRAND HEADER -->
           <div style="padding: 40px 30px; background-color: #1e293b;">
-            <div style="background-color: #3b82f6; width: 64px; height: 64px; border-radius: 16px; margin: 0 auto 20px; line-height: 64px; font-size: 36px; font-weight: 900; color: #ffffff;">S</div>
+            <div style="margin-bottom: 20px;">
+              <img src="${LOGO_URL}" alt="Sahaara Logo" style="width: 80px; height: 80px; border-radius: 20px;" />
+            </div>
             <h1 style="margin: 0; color: #ffffff; font-size: 32px; font-weight: 800; letter-spacing: -1px;">Sahaara</h1>
             <div style="height: 4px; width: 40px; background-color: #22d3ee; margin: 15px auto 0; border-radius: 2px;"></div>
           </div>
@@ -73,7 +76,7 @@ export const sendVerificationEmail = async (email: string, token: string) => {
 export const sendPasswordResetEmail = async (email: string, code: string) => {
   try {
     const { data, error } = await resend.emails.send({
-      from: `Sahaara Support <${DEFAULT_FROM}>`,
+      from: `Sahaara Security | Recovery <${DEFAULT_FROM}>`,
       to: email,
       subject: "Reset your Sahaara password",
       html: `
@@ -82,7 +85,9 @@ export const sendPasswordResetEmail = async (email: string, code: string) => {
           
           <!-- BRAND HEADER -->
           <div style="padding: 40px 30px; background-color: #1e293b;">
-            <div style="background-color: #3b82f6; width: 64px; height: 64px; border-radius: 16px; margin: 0 auto 20px; line-height: 64px; font-size: 36px; font-weight: 900; color: #ffffff;">S</div>
+            <div style="margin-bottom: 20px;">
+              <img src="${LOGO_URL}" alt="Sahaara Logo" style="width: 80px; height: 80px; border-radius: 20px;" />
+            </div>
             <h1 style="margin: 0; color: #ffffff; font-size: 32px; font-weight: 800; letter-spacing: -1px;">Sahaara</h1>
             <div style="height: 4px; width: 40px; background-color: #22d3ee; margin: 15px auto 0; border-radius: 2px;"></div>
           </div>
