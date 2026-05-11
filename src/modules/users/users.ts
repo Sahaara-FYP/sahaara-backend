@@ -491,10 +491,23 @@ usersRouter.get(
           where: {
             userId,
             status: { in: ["pending", "partially_accepted"] as any },
+            moderationStatus: { not: "blocked" },
           },
         }),
-        prisma.offer.count({ where: { userId, status: "active" as any } }),
-        prisma.alert.count({ where: { userId, status: "active" as any } }),
+        prisma.offer.count({
+          where: {
+            userId,
+            status: "active",
+            moderationStatus: { not: "blocked" },
+          },
+        }),
+        prisma.alert.count({
+          where: {
+            userId,
+            status: "active" as any,
+            moderationStatus: { not: "blocked" },
+          },
+        }),
         prisma.user.findUnique({
           where: { id: userId },
           select: { averageRating: true, totalRatings: true },
