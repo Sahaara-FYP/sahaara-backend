@@ -140,20 +140,22 @@ requestsRouter.post(
       );
 
       // Smart Matching & Proximity Broadcast (Top 20 users within 10km radius)
-      await smartMatchRequest(
-        finalRequest.id,
-        "New Help Request Nearby",
-        `${finalRequest.title}`,
-        finalRequest.category,
-        finalRequest.locationLat,
-        finalRequest.locationLng,
-        10, // 10km radius
-        20, // Limit to Top 20 for quality matching
-        {
-          visibilityVerifiedOnly: finalRequest.visibilityVerifiedOnly,
-          visibilityWomenOnly: finalRequest.visibilityWomenOnly,
-        },
-      );
+      if (finalRequest.status !== "pending_approval") {
+        await smartMatchRequest(
+          finalRequest.id,
+          "New Help Request Nearby",
+          `${finalRequest.title}`,
+          finalRequest.category,
+          finalRequest.locationLat,
+          finalRequest.locationLng,
+          10, // 10km radius
+          20, // Limit to Top 20 for quality matching
+          {
+            visibilityVerifiedOnly: finalRequest.visibilityVerifiedOnly,
+            visibilityWomenOnly: finalRequest.visibilityWomenOnly,
+          },
+        );
+      }
 
       return res.status(201).json({
         message: "Request created successfully",

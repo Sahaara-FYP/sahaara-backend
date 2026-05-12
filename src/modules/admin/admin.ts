@@ -3,6 +3,7 @@ import { verifyAccessToken } from "../../middleware/verifyAccessToken.js";
 import { verifyRole } from "../../middleware/verifyRole.js";
 import prisma from "../../utils/prisma.js";
 import { broadcast } from "../../utils/ws.js";
+import { smartMatchRequest } from "../../services/notificationService.js";
 
 const adminRouter = Router();
 
@@ -36,6 +37,22 @@ adminRouter.patch(
       });
 
       broadcast("requests_changed");
+
+      // Trigger Smart Match Notification now that it's approved
+      smartMatchRequest(
+        updatedRequest.id,
+        "New Help Request Nearby",
+        `${updatedRequest.title}`,
+        updatedRequest.category,
+        updatedRequest.locationLat,
+        updatedRequest.locationLng,
+        10,
+        20,
+        {
+          visibilityVerifiedOnly: updatedRequest.visibilityVerifiedOnly,
+          visibilityWomenOnly: updatedRequest.visibilityWomenOnly,
+        },
+      ).catch((e) => console.error("smartMatchRequest error on approval:", e));
 
       return res.status(200).json({
         message: "Request approved successfully",

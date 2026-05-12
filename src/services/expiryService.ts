@@ -8,7 +8,7 @@ import { broadcast } from "../utils/ws.js";
  */
 export const initExpiryService = () => {
   // Run every hour
-  cron.schedule("0 * * * *", async () => {
+  cron.schedule("*/5 * * * *", async () => {
     try {
       console.log("Checking for expired content (Requests, Offers, Alerts)...");
 
