@@ -370,7 +370,6 @@ requestsRouter.get(
     WHEN EXISTS (
       SELECT 1 FROM "RequestParticipator" rp
       WHERE rp.request_id = sub.id
-      AND rp.status = 'pending'::"ParticipationStatus"
         AND rp.user_id = $${userIdParamIndex}
     ) THEN true ELSE false END AS "alreadyOffered",
 
@@ -1100,7 +1099,10 @@ requestsRouter.patch(
           .json({ message: "Not authorized to complete this request" });
       }
 
-      if (request.status !== "accepted") {
+      if (
+        request.status !== "accepted" &&
+        request.status !== "partially_accepted"
+      ) {
         return res.status(400).json({
           message: `Cannot complete a ${request.status.replace(
             "_",
@@ -1599,7 +1601,7 @@ requestsRouter.get(
       );
 
       // Match list view logic: alreadyOffered is true if pending
-      const alreadyOffered = myParticipation?.status === "pending";
+      const alreadyOffered = !!myParticipation;
       const offerStatus = myParticipation?.status || null;
 
       // Calculate accepted helpers count (matching participantsCount in list view)
