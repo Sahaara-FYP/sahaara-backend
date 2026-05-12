@@ -23,6 +23,7 @@ import prisma from "./utils/prisma.js";
 import http from "http";
 import { WebSocketServer } from "ws";
 import { broadcast, initWebsocket } from "./utils/ws.js";
+import { shareRouter } from "./modules/share/share.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -66,6 +67,7 @@ app.use("/api/ratings", ratingsRouter);
 app.use("/api/notifications", notificationsRouter);
 app.use("/api/chat", chatRouter);
 app.use("/api/admin", adminRouter);
+app.use("/share", shareRouter);
 
 app.use("/api/docs", express.static(path.join(__dirname, "../apidoc")));
 app.use("/public", express.static(path.join(__dirname, "../public")));

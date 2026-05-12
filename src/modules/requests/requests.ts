@@ -101,65 +101,72 @@ requestsRouter.post(
         },
       });
 
-      // 2. Handle file uploads outside the transaction
-      const attachments: string[] = [];
-      if (req.files && Array.isArray(req.files)) {
-        for (const file of req.files as Express.Multer.File[]) {
-          const safeName = file.originalname.replace(/\s+/g, "_");
-          const filePath = `requests/${newRequest.id}/${Date.now()}_${safeName}`;
+      // Kick off background tasks (uploads, db update, chat room, matching)
+      (async () => {
+        try {
+          const attachments: string[] = [];
+          if (req.files && Array.isArray(req.files)) {
+            for (const file of req.files as Express.Multer.File[]) {
+              const safeName = file.originalname.replace(/\s+/g, "_");
+              const filePath = `requests/${newRequest.id}/${Date.now()}_${safeName}`;
 
-          const { data, error } = await supabase.storage
-            .from("attachments")
-            .upload(filePath, file.buffer, {
-              cacheControl: "3600",
-              upsert: false,
-            });
+              const { data, error } = await supabase.storage
+                .from("attachments")
+                .upload(filePath, file.buffer, {
+                  cacheControl: "3600",
+                  upsert: false,
+                });
 
-          if (error) {
-            console.error("Supabase upload error:", error);
-            continue;
+              if (error) {
+                console.error("Supabase upload error:", error);
+                continue;
+              }
+              attachments.push(data.path);
+            }
           }
-          attachments.push(data.path);
+
+          // Update the request with attachment paths if any were uploaded
+          let finalRequest = newRequest;
+          if (attachments.length > 0) {
+            finalRequest = await prisma.request.update({
+              where: { id: newRequest.id },
+              data: { attachments: attachments as Prisma.InputJsonValue },
+            });
+          }
+
+          broadcast("requests_changed");
+
+          // Create a group ChatRoom for this request
+          await createGroupRoom(userId, { requestId: finalRequest.id });
+
+          // Smart Matching & Proximity Broadcast (Top 20 users within 10km radius)
+          if (finalRequest.status !== "pending_approval") {
+            await smartMatchRequest(
+              finalRequest.id,
+              "New Help Request Nearby",
+              `${finalRequest.title}`,
+              finalRequest.category,
+              finalRequest.locationLat,
+              finalRequest.locationLng,
+              10, // 10km radius
+              20, // Limit to Top 20 for quality matching
+              {
+                visibilityVerifiedOnly: finalRequest.visibilityVerifiedOnly,
+                visibilityWomenOnly: finalRequest.visibilityWomenOnly,
+              },
+            );
+          }
+        } catch (backgroundError) {
+          console.error(
+            "Background task error (Create Request):",
+            backgroundError,
+          );
         }
-      }
-
-      // 3. Update the request with attachment paths if any were uploaded
-      let finalRequest = newRequest;
-      if (attachments.length > 0) {
-        finalRequest = await prisma.request.update({
-          where: { id: newRequest.id },
-          data: { attachments: attachments as Prisma.InputJsonValue },
-        });
-      }
-
-      broadcast("requests_changed");
-
-      // Create a group ChatRoom for this request
-      createGroupRoom(userId, { requestId: finalRequest.id }).catch((e) =>
-        console.error("createGroupRoom error:", e),
-      );
-
-      // Smart Matching & Proximity Broadcast (Top 20 users within 10km radius)
-      if (finalRequest.status !== "pending_approval") {
-        await smartMatchRequest(
-          finalRequest.id,
-          "New Help Request Nearby",
-          `${finalRequest.title}`,
-          finalRequest.category,
-          finalRequest.locationLat,
-          finalRequest.locationLng,
-          10, // 10km radius
-          20, // Limit to Top 20 for quality matching
-          {
-            visibilityVerifiedOnly: finalRequest.visibilityVerifiedOnly,
-            visibilityWomenOnly: finalRequest.visibilityWomenOnly,
-          },
-        );
-      }
+      })();
 
       return res.status(201).json({
         message: "Request created successfully",
-        request: finalRequest,
+        request: newRequest,
       });
     } catch (error) {
       console.error("Create request error:", error);

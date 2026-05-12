@@ -77,57 +77,68 @@ alertsRouter.post(
         },
       });
 
-      const attachmentsArray: string[] = [];
+      // Kick off background tasks (uploads, db update, notifications)
+      (async () => {
+        try {
+          const attachmentsArray: string[] = [];
 
-      // Handle file uploads outside the transaction
-      if (req.files && Array.isArray(req.files)) {
-        for (const file of req.files as Express.Multer.File[]) {
-          const safeName = file.originalname.replace(/\s+/g, "_");
-          const filePath = `alerts/${initialAlert.id}/${Date.now()}_${safeName}`;
+          // Handle file uploads
+          if (req.files && Array.isArray(req.files)) {
+            for (const file of req.files as Express.Multer.File[]) {
+              const safeName = file.originalname.replace(/\s+/g, "_");
+              const filePath = `alerts/${initialAlert.id}/${Date.now()}_${safeName}`;
 
-          const { data, error } = await supabase.storage
-            .from("attachments")
-            .upload(filePath, file.buffer, {
-              cacheControl: "3600",
-              upsert: false,
-            });
+              const { data, error } = await supabase.storage
+                .from("attachments")
+                .upload(filePath, file.buffer, {
+                  cacheControl: "3600",
+                  upsert: false,
+                });
 
-          if (error) {
-            console.error("Supabase upload error:", error);
-            continue;
+              if (error) {
+                console.error("Supabase upload error:", error);
+                continue;
+              }
+              attachmentsArray.push(data.path);
+            }
           }
-          attachmentsArray.push(data.path);
+
+          // Update alert with attachment paths if any were uploaded
+          let finalAlert = initialAlert;
+          if (attachmentsArray.length > 0) {
+            finalAlert = await prisma.alert.update({
+              where: { id: initialAlert.id },
+              data: { attachments: attachmentsArray as Prisma.InputJsonValue },
+            });
+          }
+
+          broadcast("alerts_changed");
+
+          // Broadcast alert to all nearby users (20km radius, no limit, exclude creator)
+          await broadcastNotification(
+            `Alert: ${finalAlert.title}`,
+            finalAlert.description ||
+              "A new alert has been posted in your area.",
+            "alert_nearby",
+            { alertId: finalAlert.id },
+            Number(finalAlert.locationLat),
+            Number(finalAlert.locationLng),
+            20, // 20km radius for alerts
+            undefined, // no limit
+            finalAlert.userId, // exclude the creator
+            false, // verifiedOnly
+          );
+        } catch (backgroundError) {
+          console.error(
+            "Background task error (Create Alert):",
+            backgroundError,
+          );
         }
-      }
-
-      // Update alert with attachment paths if any were uploaded
-      let finalAlert = initialAlert;
-      if (attachmentsArray.length > 0) {
-        finalAlert = await prisma.alert.update({
-          where: { id: initialAlert.id },
-          data: { attachments: attachmentsArray as Prisma.InputJsonValue },
-        });
-      }
-
-      broadcast("alerts_changed");
-
-      // Broadcast alert to all nearby users (20km radius, no limit, exclude creator)
-      await broadcastNotification(
-        `Alert: ${finalAlert.title}`,
-        finalAlert.description || "A new alert has been posted in your area.",
-        "alert_nearby",
-        { alertId: finalAlert.id },
-        Number(finalAlert.locationLat),
-        Number(finalAlert.locationLng),
-        20, // 20km radius for alerts
-        undefined, // no limit
-        finalAlert.userId, // exclude the creator
-        true, // verifiedOnly
-      );
+      })();
 
       return res.status(201).json({
         message: "Alert created successfully",
-        alert: finalAlert,
+        alert: initialAlert,
       });
     } catch (error) {
       console.error("Create alert error:", error);

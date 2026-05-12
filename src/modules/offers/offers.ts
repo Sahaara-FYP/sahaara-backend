@@ -113,51 +113,59 @@ offersRouter.post(
         },
       });
 
-      const attachmentsArray: string[] = [];
+      // Kick off background tasks (uploads, db update, chat room)
+      (async () => {
+        try {
+          const attachmentsArray: string[] = [];
 
-      // Handle file uploads outside the transaction
-      if (req.files && Array.isArray(req.files)) {
-        for (const file of req.files as Express.Multer.File[]) {
-          const safeName = file.originalname.replace(/\s+/g, "_");
-          const filePath = `offers/${initialOffer.id}/${Date.now()}_${safeName}`;
+          // Handle file uploads
+          if (req.files && Array.isArray(req.files)) {
+            for (const file of req.files as Express.Multer.File[]) {
+              const safeName = file.originalname.replace(/\s+/g, "_");
+              const filePath = `offers/${initialOffer.id}/${Date.now()}_${safeName}`;
 
-          const { data, error } = await supabase.storage
-            .from("attachments")
-            .upload(filePath, file.buffer, {
-              cacheControl: "3600",
-              upsert: false,
-            });
+              const { data, error } = await supabase.storage
+                .from("attachments")
+                .upload(filePath, file.buffer, {
+                  cacheControl: "3600",
+                  upsert: false,
+                });
 
-          if (error) {
-            console.error("Supabase upload error:", error);
-            continue;
+              if (error) {
+                console.error("Supabase upload error:", error);
+                continue;
+              }
+              attachmentsArray.push(data.path);
+            }
           }
-          attachmentsArray.push(data.path);
+
+          // Update offer with attachment paths if any were uploaded
+          let finalOffer = initialOffer;
+          if (attachmentsArray.length > 0) {
+            finalOffer = await prisma.offer.update({
+              where: { id: initialOffer.id },
+              data: { attachments: attachmentsArray as Prisma.InputJsonValue },
+            });
+          }
+
+          broadcast("offers_changed");
+
+          // Create a group ChatRoom for this offer
+          await createGroupRoom(userId, { offerId: finalOffer.id });
+
+          // Broadcast new offer change again for the final state
+          broadcast("offers_changed", { offerId: finalOffer.id });
+        } catch (backgroundError) {
+          console.error(
+            "Background task error (Create Offer):",
+            backgroundError,
+          );
         }
-      }
-
-      // Update offer with attachment paths if any were uploaded
-      let finalOffer = initialOffer;
-      if (attachmentsArray.length > 0) {
-        finalOffer = await prisma.offer.update({
-          where: { id: initialOffer.id },
-          data: { attachments: attachmentsArray as Prisma.InputJsonValue },
-        });
-      }
-
-      broadcast("offers_changed");
-
-      // Create a group ChatRoom for this offer
-      createGroupRoom(userId, { offerId: finalOffer.id }).catch((e) =>
-        console.error("createGroupRoom error:", e),
-      );
-
-      // Broadcast new offer
-      broadcast("offers_changed", { offerId: finalOffer.id });
+      })();
 
       return res.status(201).json({
         message: "Offer created successfully",
-        data: finalOffer,
+        data: initialOffer,
       });
     } catch (error) {
       console.error("Create offer error:", error);
