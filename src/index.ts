@@ -18,6 +18,7 @@ import { ratingsRouter } from "./modules/ratings/ratings.js";
 import { notificationsRouter } from "./modules/notifications/notifications.js";
 import { chatRouter } from "./modules/chat/chat.js";
 import { initExpiryService } from "./services/expiryService.js";
+import adminRouter from "./modules/admin/admin.js";
 import prisma from "./utils/prisma.js";
 import http from "http";
 import { WebSocketServer } from "ws";
@@ -64,6 +65,7 @@ app.use("/api/reports", reportsRouter);
 app.use("/api/ratings", ratingsRouter);
 app.use("/api/notifications", notificationsRouter);
 app.use("/api/chat", chatRouter);
+app.use("/api/admin", adminRouter);
 
 app.use("/api/docs", express.static(path.join(__dirname, "../apidoc")));
 app.use("/public", express.static(path.join(__dirname, "../public")));

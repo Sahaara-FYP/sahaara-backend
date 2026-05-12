@@ -15,6 +15,7 @@ import {
   createGroupRoom,
   onInteractionAccepted,
 } from "../../utils/chatHelpers.js";
+import { calculateExpiryDate } from "../../utils/calculateExpiry.js";
 
 export const offersRouter = Router();
 
@@ -77,6 +78,12 @@ offersRouter.post(
     }
 
     try {
+      // Fetch user to check verification status
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { isVerified: true },
+      });
+
       // Create initial offer record (without attachments yet)
       const initialOffer = await prisma.offer.create({
         data: {
@@ -87,6 +94,7 @@ offersRouter.post(
           type,
           locationLat: parseFloat(locationLat),
           locationLng: parseFloat(locationLng),
+          status: user?.isVerified ? "active" : "pending_approval",
           ...(type === "resource" && {
             totalQuantity: parseInt(totalQuantity),
             remainingQuantity: parseInt(totalQuantity),
@@ -96,6 +104,11 @@ offersRouter.post(
             availability,
             experienceDesc,
           }),
+          expiresAt: calculateExpiryDate(
+            "offer",
+            "normal",
+            user?.isVerified || false,
+          ),
           attachments: [],
         },
       });
@@ -1370,6 +1383,91 @@ offersRouter.get(
       });
     } catch (error) {
       console.error("Get offer details error:", error);
+      return res.status(500).json({ error: "Internal server error" });
+    }
+  },
+);
+
+/**
+ * @api {patch} /offers/renew Renew an Offer
+ * @apiName RenewOffer
+ * @apiGroup Offers
+ * @apiPermission authenticated
+ * @apiHeader {String} Authorization Bearer Token
+ * @apiBody {String} offerId ID of the offer
+ */
+offersRouter.patch(
+  "/renew",
+  verifyAccessToken,
+  async (req: Request, res: Response) => {
+    try {
+      const { offerId } = req.body;
+      const userId = req.userId!;
+
+      if (!offerId) {
+        return res.status(400).json({ error: "Offer ID is required" });
+      }
+
+      const offer = await prisma.offer.findUnique({
+        where: { id: offerId },
+        include: { user: { select: { isVerified: true } } },
+      });
+
+      if (!offer) {
+        return res.status(404).json({ error: "Offer not found" });
+      }
+
+      if (offer.userId !== userId) {
+        return res
+          .status(403)
+          .json({ error: "Only the owner can renew this offer" });
+      }
+
+      if (offer.status === "completed" || offer.status === "cancelled") {
+        return res
+          .status(400)
+          .json({ error: "Cannot renew a completed or cancelled offer" });
+      }
+
+      // Check renewal conditions: less than 24h remaining or already expired
+      const now = new Date();
+      const expiresAt = offer.expiresAt ? new Date(offer.expiresAt) : null;
+
+      const isExpired = expiresAt && expiresAt < now;
+      const hoursRemaining = expiresAt
+        ? (expiresAt.getTime() - now.getTime()) / (1000 * 60 * 60)
+        : 0;
+
+      if (!isExpired && hoursRemaining > 24) {
+        return res
+          .status(400)
+          .json({ error: "You can only renew within 24 hours of expiration" });
+      }
+
+      const newExpiry = calculateExpiryDate(
+        "offer",
+        "normal",
+        offer.user?.isVerified || false,
+      );
+
+      const updatedOffer = await prisma.offer.update({
+        where: { id: offerId },
+        data: {
+          expiresAt: newExpiry,
+          status: "active",
+          createdAt: new Date(), // Bump to top
+          renewedCount: { increment: 1 },
+        },
+      });
+
+      broadcast("offers_changed", { offerId });
+
+      return res.status(200).json({
+        message: "Offer renewed and bumped to top!",
+        data: updatedOffer,
+      });
+    } catch (error) {
+      console.error("Renew offer error:", error);
       return res.status(500).json({ error: "Internal server error" });
     }
   },

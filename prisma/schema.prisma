@@ -99,6 +99,7 @@ model Request {
   maxHelpers             Int?             @default(1) @map("max_helpers")
   completedAt            DateTime?        @map("completed_at")
   expiresAt              DateTime?        @map("expires_at")
+  renewedCount           Int              @default(0) @map("renewed_count")
   attachments            Json?
   createdAt              DateTime         @default(now()) @map("created_at")
   updatedAt              DateTime         @default(now()) @updatedAt @map("updated_at")
@@ -163,7 +164,8 @@ model Alert {
   attachments      Json?
   status           AlertStatus      @default(active)
   moderationStatus ModerationStatus @default(clean) @map("moderation_status")
-  expiryTime       DateTime?        @map("expiry_time")
+  expiresAt        DateTime?        @map("expires_at")
+  renewedCount     Int              @default(0) @map("renewed_count")
 
   acknowledgements AlertAcknowledgement[]
 
@@ -224,6 +226,7 @@ model Offer {
 
   attachments       Json?
   expiresAt         DateTime?        @map("expires_at")
+  renewedCount      Int              @default(0) @map("renewed_count")
   createdAt         DateTime         @default(now()) @map("created_at")
   updatedAt         DateTime         @default(now()) @updatedAt @map("updated_at")
 
@@ -274,6 +277,7 @@ enum UrgencyLevel {
 }
 
 enum RequestStatus {
+  pending_approval
   pending
   partially_accepted
   accepted
@@ -342,11 +346,13 @@ enum OfferType {
 }
 
 enum OfferStatus {
+  pending_approval
   active
   paused
   depleted // All resources claimed
   completed // Offer finished/closed
   cancelled
+  expired
 }
 
 enum InteractionStatus {

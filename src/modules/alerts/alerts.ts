@@ -9,6 +9,7 @@ import { keysToCamel } from "../../utils/camelize.js";
 import { verifyRole } from "../../middleware/verifyRole.js";
 import { broadcast } from "../../utils/ws.js";
 import { broadcastNotification } from "../../services/notificationService.js";
+import { calculateExpiryDate } from "../../utils/calculateExpiry.js";
 
 export const alertsRouter = Router();
 
@@ -51,6 +52,12 @@ alertsRouter.post(
     }
 
     try {
+      // Fetch user to check verification status
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { isVerified: true },
+      });
+
       // Create initial alert record (without attachments yet)
       const initialAlert = await prisma.alert.create({
         data: {
@@ -61,6 +68,11 @@ alertsRouter.post(
           urgencyLevel,
           locationLat: parseFloat(locationLat),
           locationLng: parseFloat(locationLng),
+          expiresAt: calculateExpiryDate(
+            "alert",
+            urgencyLevel || "normal",
+            user?.isVerified || false,
+          ),
           attachments: [],
         },
       });
@@ -1066,6 +1078,91 @@ alertsRouter.get(
       });
     } catch (error) {
       console.error("Get alert details error:", error);
+      return res.status(500).json({ error: "Internal server error" });
+    }
+  },
+);
+
+/**
+ * @api {patch} /alerts/renew Renew an Alert
+ * @apiName RenewAlert
+ * @apiGroup Alerts
+ * @apiPermission authenticated
+ * @apiHeader {String} Authorization Bearer Token
+ * @apiBody {String} alertId ID of the alert
+ */
+alertsRouter.patch(
+  "/renew",
+  verifyAccessToken,
+  async (req: Request, res: Response) => {
+    try {
+      const { alertId } = req.body;
+      const userId = req.userId!;
+
+      if (!alertId) {
+        return res.status(400).json({ error: "Alert ID is required" });
+      }
+
+      const alert = await prisma.alert.findUnique({
+        where: { id: alertId },
+        include: { user: { select: { isVerified: true } } },
+      });
+
+      if (!alert) {
+        return res.status(404).json({ error: "Alert not found" });
+      }
+
+      if (alert.userId !== userId) {
+        return res
+          .status(403)
+          .json({ error: "Only the owner can renew this alert" });
+      }
+
+      if (alert.status !== "active" && alert.status !== "expired") {
+        return res
+          .status(400)
+          .json({ error: `Cannot renew a ${alert.status} alert` });
+      }
+
+      // Check renewal conditions: less than 24h remaining or already expired
+      const now = new Date();
+      const expiresAt = alert.expiresAt ? new Date(alert.expiresAt) : null;
+
+      const isExpired = expiresAt && expiresAt < now;
+      const hoursRemaining = expiresAt
+        ? (expiresAt.getTime() - now.getTime()) / (1000 * 60 * 60)
+        : 0;
+
+      if (!isExpired && hoursRemaining > 24) {
+        return res
+          .status(400)
+          .json({ error: "You can only renew within 24 hours of expiration" });
+      }
+
+      const newExpiry = calculateExpiryDate(
+        "alert",
+        alert.urgencyLevel as "high" | "normal" | "low",
+        alert.user?.isVerified || false,
+      );
+
+      const updatedAlert = await prisma.alert.update({
+        where: { id: alertId },
+        data: {
+          expiresAt: newExpiry,
+          status: "active",
+          createdAt: new Date(), // Bump to top
+          renewedCount: { increment: 1 },
+        },
+      });
+
+      broadcast("alerts_changed", { alertId });
+
+      return res.status(200).json({
+        message: "Alert renewed and bumped to top!",
+        data: updatedAlert,
+      });
+    } catch (error) {
+      console.error("Renew alert error:", error);
       return res.status(500).json({ error: "Internal server error" });
     }
   },

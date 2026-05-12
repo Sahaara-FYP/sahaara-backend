@@ -19,6 +19,7 @@ import {
   createGroupRoom,
   onInteractionAccepted,
 } from "../../utils/chatHelpers.js";
+import { calculateExpiryDate } from "../../utils/calculateExpiry.js";
 
 export const requestsRouter = Router();
 
@@ -70,6 +71,12 @@ requestsRouter.post(
     const userId = req.userId!;
 
     try {
+      // Fetch user to check verification status
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { isVerified: true },
+      });
+
       // 1. Create the request record first
       const newRequest = await prisma.request.create({
         data: {
@@ -80,13 +87,15 @@ requestsRouter.post(
           urgencyLevel,
           locationLat: parseFloat(locationLat),
           locationLng: parseFloat(locationLng),
+          status: user?.isVerified ? "pending" : "pending_approval",
           postAnonymously: postAnonymously === "true",
           visibilityVerifiedOnly: visibilityVerifiedOnly === "true",
           visibilityWomenOnly: visibilityWomenOnly === "true",
           maxHelpers: maxHelpers ? parseInt(maxHelpers) : 1,
-          expiresAt: new Date(
-            Date.now() +
-              (urgencyLevel === "high" ? 2 : 7) * 24 * 60 * 60 * 1000,
+          expiresAt: calculateExpiryDate(
+            "request",
+            urgencyLevel,
+            user?.isVerified || false,
           ),
           attachments: [],
         },
@@ -1648,6 +1657,7 @@ requestsRouter.patch(
 
       const request = await prisma.request.findUnique({
         where: { id: requestId },
+        include: { user: { select: { isVerified: true } } },
       });
 
       if (!request) {
@@ -1669,10 +1679,25 @@ requestsRouter.patch(
         });
       }
 
-      // Set new expiry: 7 days for normal, 2 days for high urgency
-      const newExpiresAt = new Date(
-        Date.now() +
-          (request.urgencyLevel === "high" ? 2 : 7) * 24 * 60 * 60 * 1000,
+      // Check renewal conditions: less than 24h remaining or already expired
+      const now = new Date();
+      const expiresAt = request.expiresAt ? new Date(request.expiresAt) : null;
+
+      const isExpired = expiresAt && expiresAt < now;
+      const hoursRemaining = expiresAt
+        ? (expiresAt.getTime() - now.getTime()) / (1000 * 60 * 60)
+        : 0;
+
+      if (!isExpired && hoursRemaining > 24) {
+        return res
+          .status(400)
+          .json({ error: "You can only renew within 24 hours of expiration" });
+      }
+
+      const newExpiresAt = calculateExpiryDate(
+        "request",
+        request.urgencyLevel as "high" | "normal" | "low",
+        request.user?.isVerified || false,
       );
 
       const updatedRequest = await prisma.request.update({
@@ -1680,6 +1705,8 @@ requestsRouter.patch(
         data: {
           expiresAt: newExpiresAt,
           status: request.status === "expired" ? "pending" : request.status,
+          createdAt: new Date(), // Bump to top of feed
+          renewedCount: { increment: 1 },
         },
       });
 
