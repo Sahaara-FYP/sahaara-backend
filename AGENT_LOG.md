@@ -32,8 +32,9 @@ Technical analysis and reverse engineering of the Sahaara backend for a "Softwar
 - Proposed re-engineering shift and stack improvements.
 - [x] Fixed `Object is possibly undefined` error in `users.ts`.
 - [x] Fixed 4 TypeScript errors in `chatHelpers.ts` related to Prisma input types and relation inference.
-- [x] Fixed aggregate result access error in `ratings.ts` by using `_all` and safe navigation.
+- [x] Implemented multi-stage Dockerfile and .dockerignore for Node 20 Alpine.
+- [x] Added build tools for native modules (bcrypt) support in Alpine.
 
 ## NEXT ACTION
 
-Continue scanning `src` and `prisma` subdirectories.
+Complete any remaining technical re-engineering tasks.
